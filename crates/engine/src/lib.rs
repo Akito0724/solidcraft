@@ -2486,6 +2486,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         plastic,
         parts,
         links,
+        param_files,
         configs,
         favorites,
         canvases,
@@ -2522,6 +2523,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         && *plastic == b.plastic
         && *parts == b.parts
         && *links == b.links
+        && *param_files == b.param_files
         && *configs == b.configs
         && *favorites == b.favorites
         && *canvases == b.canvases
