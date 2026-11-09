@@ -15,11 +15,14 @@ repository = "https://github.com/bherbruck/solidcraft"
 
 [workspace.dependencies]
 robust = "1.2"
+# Arc-preserving 2D offsets for CAM toolpaths (crates/cam)
+cavalier_contours = "0.9"
 # internal
 solidcraft-geom = { path = "crates/geom" }
 solidcraft-profile = { path = "crates/profile" }
 solidcraft-sketch = { path = "crates/sketch" }
 solidcraft-kernel = { path = "crates/kernel" }
+solidcraft-cam = { path = "crates/cam" }
 solidcraft-smlib = { path = "crates/smlib" }
 solidcraft-step = { path = "crates/step" }
 solidcraft-render = { path = "crates/render" }

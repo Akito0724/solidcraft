@@ -56,6 +56,8 @@ pub const TABLE: &[(&str, Class)] = &[
     // STEP (ISO 10303) exchange structure and geometry, no modelling backend
     ("step", Class::Layer(1)),
     ("kernel", Class::Layer(1)),
+    // 2.5D toolpaths and G-code from 2D profiles (no workspace dependencies)
+    ("cam", Class::Layer(1)),
     ("render", Class::Layer(1)),
     // multibody dynamics (rigid bodies, joints, forces, time integration; geom only)
     ("dynamics", Class::Layer(1)),

@@ -1,0 +1,18 @@
+[package]
+name = "solidcraft-cam"
+description = "SolidCraft CAM: 2.5D toolpaths (facing, pockets, contours with tabs, drilling) from exact 2D profiles, and GRBL G-code"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Serialize the CAM inputs (tools, cutting data, operations) for designs that keep them.
+serde = ["dep:serde"]
+
+[dependencies]
+# Arc-preserving 2D offsets of closed profiles with islands (MIT OR Apache-2.0).
+cavalier_contours = { workspace = true }
+serde = { workspace = true, optional = true }
