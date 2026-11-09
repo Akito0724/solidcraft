@@ -6,5 +6,21 @@
   "ja": {
     "prefs.graphics_page.same_while_moving": "動かしても同じ",
     "ui.graphics_steady": "安定"
+  },
+  "ar": {
+    "prefs.graphics_page.same_while_moving": "نفسه أثناء الحركة",
+    "ui.graphics_steady": "ثابت"
+  },
+  "he": {
+    "prefs.graphics_page.same_while_moving": "זהה גם בתנועה",
+    "ui.graphics_steady": "יציב"
+  },
+  "vi": {
+    "prefs.graphics_page.same_while_moving": "Như nhau khi di chuyển",
+    "ui.graphics_steady": "Ổn định"
+  },
+  "zh": {
+    "prefs.graphics_page.same_while_moving": "移动时保持一致",
+    "ui.graphics_steady": "稳定"
   }
 }
