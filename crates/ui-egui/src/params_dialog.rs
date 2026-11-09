@@ -68,8 +68,106 @@ pub struct ParamsDialog {
     /// Measured model groups keep their scroll space without rebuilding offscreen tables.
     group_layout: Option<GroupLayout>,
     group_sizes: std::collections::HashMap<String, egui::Vec2>,
+    /// The shared parameter files as `parameters.files` listed them: (revision, time, files).
+    /// Listing reads each file to see whether it changed, so it happens when the design
+    /// changes or every few seconds, not every frame.
+    shared: Option<(u64, f64, Vec<SharedFile>)>,
     #[cfg(test)]
     groups_drawn: usize,
+}
+
+/// A shared parameter file of the design, as `parameters.files` lists it.
+#[derive(Clone, Debug)]
+struct SharedFile {
+    path: String,
+    names: Vec<String>,
+    found: Option<bool>,
+    changed: Option<bool>,
+}
+
+/// How often the shared files are looked at again while the design doesn't change (s).
+const SHARED_RECHECK: f64 = 2.0;
+
+/// The design's shared parameter files, listed again when the design changed or
+/// [`SHARED_RECHECK`] has passed.
+fn shared_files(app: &mut SolveApp, d: &mut ParamsDialog, now: f64) -> Vec<SharedFile> {
+    if app.session.doc.param_files.is_empty() {
+        d.shared = None;
+        return Vec::new();
+    }
+    let fresh = d.shared.as_ref().is_some_and(|(rev, at, _)| *rev == app.session.revision && now - *at < SHARED_RECHECK);
+    if !fresh {
+        let list = app.session.execute("parameters.files", &json!({})).unwrap_or_default();
+        let files = list["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|f| SharedFile {
+                path: f["path"].as_str().unwrap_or_default().to_string(),
+                names: f["names"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect(),
+                found: f["found"].as_bool(),
+                changed: f["changed"].as_bool(),
+            })
+            .collect();
+        d.shared = Some((app.session.revision, now, files));
+    }
+    d.shared.as_ref().map(|(_, _, files)| files.clone()).unwrap_or_default()
+}
+
+/// The shared parameter files: link one, share the design's parameters through a new one, and
+/// for each file the parameters it gives, whether it changed elsewhere, Update and Unlink.
+fn shared_section(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog) {
+    ui.horizontal_wrapped(|ui| {
+        if ui_kit::icon_label_button(ui, "Link shared file…", "import_tray", true, false)
+            .backing_on_hover_text(solidcraft_ui_text::tr_label(
+                "Read a parameter table that other designs share. A change made here is written back to the file.",
+            ))
+            .clicked()
+        {
+            app.pick_open_command("parameters.link_file", json!({}), IMPORT_TYPES);
+        }
+        if ui_kit::icon_label_button(ui, "Share to file…", "export_tray", true, false)
+            .backing_on_hover_text(solidcraft_ui_text::tr_label("Write the user parameters to a new file that other designs can link."))
+            .clicked()
+        {
+            app.pick_save_command("shared_parameters.json", &["json"], "parameters.share", json!({}));
+        }
+    });
+    let now = ui.input(|i| i.time);
+    let files = shared_files(app, d, now);
+    if files.is_empty() {
+        return;
+    }
+    ui_kit::text(ui, solidcraft_ui_text::tr_label("Shared parameter files"), ui_kit::Text::Heading("shared_parameter_files"));
+    for f in files {
+        ui_kit::text(ui, &format!("{}: {}", f.path, f.names.join(", ")), ui_kit::Text::Note("shared_parameter_file"));
+        match (f.found, f.changed) {
+            (Some(false), _) => ui_kit::text(
+                ui,
+                solidcraft_ui_text::tr_label("Not found: the design keeps the values it last read"),
+                ui_kit::Text::Error("shared_parameter_missing"),
+            ),
+            (_, Some(true)) => ui_kit::text(
+                ui,
+                solidcraft_ui_text::tr_label("Changed elsewhere: update to read it"),
+                ui_kit::Text::Error("shared_parameter_changed"),
+            ),
+            _ => ui_kit::text(ui, solidcraft_ui_text::tr_label("Up to date"), ui_kit::Text::Hint("shared_parameter_current")),
+        };
+        ui.horizontal_wrapped(|ui| {
+            if ui_kit::icon_label_button(ui, "Update", "import_tray", f.found == Some(true), false).clicked() {
+                d.error = app.run("parameters.update_files", json!({"path": &f.path})).err();
+                d.shared = None;
+            }
+            if ui_kit::icon_label_button(ui, "Unlink", "delete", true, false)
+                .backing_on_hover_text(solidcraft_ui_text::tr_label("Stop reading this file; its parameters stay as this design's own."))
+                .clicked()
+            {
+                d.error = app.run("parameters.unlink_file", json!({"path": &f.path})).err();
+                d.shared = None;
+            }
+        });
+    }
 }
 
 #[derive(PartialEq)]
@@ -297,6 +395,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         }
                     }
                 });
+                shared_section(app, ui, &mut d);
                 if let Some(error) = d.banner() {
                     ui_kit::text(ui, error, ui_kit::Text::Error("parameters_error"));
                 }

@@ -94,7 +94,7 @@ impl SolveApp {
                 let mut params = params;
                 params["path"] = json!(path);
                 let result = app.run(&command, params);
-                if command == "parameters.import"
+                if matches!(command.as_str(), "parameters.import" | "parameters.link_file")
                     && let Some(dialog) = app.params.as_mut()
                 {
                     dialog.error = result.err();
@@ -110,7 +110,7 @@ impl SolveApp {
                 let mut params = params;
                 params["path"] = json!(path);
                 let result = app.run(&command, params);
-                if command == "parameters.export"
+                if matches!(command.as_str(), "parameters.export" | "parameters.share")
                     && let Some(dialog) = app.params.as_mut()
                 {
                     dialog.error = result.err();

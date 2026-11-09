@@ -155,7 +155,28 @@ fn is_text(s: &Session, name: &str, unit: Option<&str>) -> bool {
     s.doc.text_param(name).is_some() || unit.is_some_and(solidcraft_doc::text_params::is_text_unit)
 }
 
+/// The parameters a `parameters.change` call edits, for the shared-file check; `None` when it
+/// can't tell (the handler then refuses the call itself).
+fn touched(p: &Value) -> Option<Vec<String>> {
+    if let Some(changes) = p.get("changes") {
+        return changes.as_object().map(|m| m.keys().cloned().collect());
+    }
+    let name = str_(p, "delete").or_else(|| str_(p, "name"))?;
+    Some(vec![name.trim().to_string()])
+}
+
+/// Change Parameters, then the shared parameter files whose parameters changed are written
+/// back (`param_files`); an edit of a shared parameter whose file changed elsewhere is refused.
 fn change_param(s: &mut Session, p: &Value) -> Result<Value> {
+    if let Some(names) = touched(p) {
+        super::param_files::guard(s, "parameters.change", Some(names.as_slice()))?;
+    }
+    let out = change_param_here(s, p)?;
+    super::param_files::write_back(s)?;
+    Ok(out)
+}
+
+fn change_param_here(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "parameters.change";
     let solved = s.solved_sketches();
     if let Some(changes) = p.get("changes") {
@@ -461,7 +482,9 @@ fn comment(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "parameters.comment";
     let name = param_name(cmd, p)?.to_string();
     let c = str_(p, "comment").ok_or_else(|| bad(cmd, "`comment` must be text"))?;
+    super::param_files::guard(s, cmd, Some(std::slice::from_ref(&name)))?;
     s.doc_mut().set_param_comment(&name, c)?;
+    super::param_files::write_back(s)?;
     reply(cmd, ParamCommented { name, comment: c.to_string(), param_warnings: Vec::new() })
 }
 
@@ -533,9 +556,11 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
         }
         _ => return Err(bad(cmd, "give `text` or `path`")),
     };
+    super::param_files::guard(s, cmd, None)?;
     let solved = s.solved_sketches();
     let names = s.doc_mut().import_params(&text)?;
     s.settle_value_edit(&solved)?;
+    super::param_files::write_back(s)?;
     reply(cmd, ParamImportResult { imported: names, errors: failing(s), param_warnings: Vec::new() })
 }
 

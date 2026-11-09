@@ -505,43 +505,7 @@ impl Document {
     /// Import user parameters (CSV with a header, or JSON `[{name, expression, unit?, comment?}]`):
     /// existing ones are updated, new ones added, all checked before anything changes.
     pub fn import_params(&mut self, text: &str) -> Result<Vec<String>> {
-        let rows: Vec<(String, String, Option<String>, Option<String>)> = if text.trim_start().starts_with('[') {
-            let v: serde_json::Value = serde_json::from_str(text).map_err(|e| DocError::Invalid(format!("parameters JSON: {e}")))?;
-            v.as_array()
-                .ok_or_else(|| DocError::Invalid("parameters JSON must be a list".into()))?
-                .iter()
-                .map(|r| {
-                    let s = |k: &str| r.get(k).and_then(|x| x.as_str().map(str::to_string).or_else(|| x.as_f64().map(|n| n.to_string())));
-                    Ok((
-                        s("name").ok_or_else(|| DocError::Invalid("a parameter without `name`".into()))?,
-                        s("expression").or_else(|| s("value")).unwrap_or_default(),
-                        s("unit"),
-                        s("comment"),
-                    ))
-                })
-                .collect::<Result<_>>()?
-        } else {
-            let mut records = split_csv(text.strip_prefix('\u{feff}').unwrap_or(text), '\n');
-            let header = csv_fields(records.next().unwrap_or_default())?;
-            let col = |n: &str| header.iter().position(|h| h.trim().eq_ignore_ascii_case(n));
-            let (Some(ni), Some(ei)) = (col("name"), col("expression").or(col("value"))) else {
-                return Err(DocError::Invalid("the CSV needs `name` and `expression` columns".into()));
-            };
-            let (ui, ci) = (col("unit"), col("comment"));
-            records
-                .filter(|record| !record.trim().is_empty())
-                .take(MAX_PARAMS + 1)
-                .map(|record| {
-                    let c = csv_fields(record)?;
-                    let get = |i: Option<usize>| i.and_then(|i| c.get(i)).map(|s| s.trim().to_string());
-                    let comment = ci.and_then(|i| c.get(i)).cloned();
-                    Ok((get(Some(ni)).unwrap_or_default(), get(Some(ei)).unwrap_or_default(), get(ui), comment))
-                })
-                .collect::<Result<_>>()?
-        };
-        if rows.len() > MAX_PARAMS {
-            return Err(DocError::Invalid("too many parameters".into()));
-        }
+        let rows = param_table(text)?;
         // Each row is checked and applied as `change_param` would, but the parameters are
         // evaluated once for all of them, not once per row (thousands of rows took minutes).
         let mut next = self.clone();
@@ -632,6 +596,50 @@ impl Document {
         };
         Ok(())
     }
+}
+
+/// The rows of a parameter table: CSV with a header (`name`, `expression` or `value`, and
+/// optionally `unit` and `comment`), or JSON `[{name, expression, unit?, comment?}]`. Each row is
+/// (name, expression, unit, comment); nothing is checked against a design.
+pub(crate) fn param_table(text: &str) -> Result<Vec<(String, String, Option<String>, Option<String>)>> {
+    let rows: Vec<(String, String, Option<String>, Option<String>)> = if text.trim_start().starts_with('[') {
+        let v: serde_json::Value = serde_json::from_str(text).map_err(|e| DocError::Invalid(format!("parameters JSON: {e}")))?;
+        v.as_array()
+            .ok_or_else(|| DocError::Invalid("parameters JSON must be a list".into()))?
+            .iter()
+            .map(|r| {
+                let s = |k: &str| r.get(k).and_then(|x| x.as_str().map(str::to_string).or_else(|| x.as_f64().map(|n| n.to_string())));
+                Ok((
+                    s("name").ok_or_else(|| DocError::Invalid("a parameter without `name`".into()))?,
+                    s("expression").or_else(|| s("value")).unwrap_or_default(),
+                    s("unit"),
+                    s("comment"),
+                ))
+            })
+            .collect::<Result<_>>()?
+    } else {
+        let mut records = split_csv(text.strip_prefix('\u{feff}').unwrap_or(text), '\n');
+        let header = csv_fields(records.next().unwrap_or_default())?;
+        let col = |n: &str| header.iter().position(|h| h.trim().eq_ignore_ascii_case(n));
+        let (Some(ni), Some(ei)) = (col("name"), col("expression").or(col("value"))) else {
+            return Err(DocError::Invalid("the CSV needs `name` and `expression` columns".into()));
+        };
+        let (ui, ci) = (col("unit"), col("comment"));
+        records
+            .filter(|record| !record.trim().is_empty())
+            .take(MAX_PARAMS + 1)
+            .map(|record| {
+                let c = csv_fields(record)?;
+                let get = |i: Option<usize>| i.and_then(|i| c.get(i)).map(|s| s.trim().to_string());
+                let comment = ci.and_then(|i| c.get(i)).cloned();
+                Ok((get(Some(ni)).unwrap_or_default(), get(Some(ei)).unwrap_or_default(), get(ui), comment))
+            })
+            .collect::<Result<_>>()?
+    };
+    if rows.len() > MAX_PARAMS {
+        return Err(DocError::Invalid("too many parameters".into()));
+    }
+    Ok(rows)
 }
 
 /// Something that uses a parameter.
@@ -830,6 +838,7 @@ impl Document {
 
     /// Remove a stored parameter; refused while something uses it (the error lists the users).
     pub fn remove_param(&mut self, name: &str) -> Result<()> {
+        self.shared_guard(name, "delete")?;
         if self.text_param(name).is_some() {
             return self.remove_text_param(name);
         }
@@ -860,6 +869,7 @@ impl Document {
         if old == new {
             return Ok(0);
         }
+        self.shared_guard(old, "rename")?;
         if let Some(p) = Self::param_name_problem(new) {
             return Err(DocError::Invalid(p));
         }

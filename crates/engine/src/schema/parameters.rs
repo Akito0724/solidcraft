@@ -1153,3 +1153,140 @@ pub struct ExprCompletions {
 #[cfg(test)]
 #[path = "parameters_tests.rs"]
 mod tests;
+
+/// Read a shared parameter file and use its parameters: they become the design's user
+/// parameters, kept in step with the file (`parameters.update_files`), and a change to one of
+/// them in this design is written back to the file. All or nothing: a name this design already
+/// uses refuses the file. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ParamFileLinkParams {
+    /// The file: a parameter table as `parameters.export` writes it (JSON or CSV).
+    #[schemars(length(min = 1))]
+    pub path: String,
+}
+
+/// What `parameters.link_file` returns, and each file `parameters.update_files` read again.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ParamFileLinked {
+    /// The file as the design keeps it.
+    pub path: String,
+    /// The file it found.
+    pub file: String,
+    /// The parameters the file gives, in its order.
+    pub names: Vec<String>,
+    /// Parameters the file gave before and no longer does: kept as the design's own.
+    pub dropped: Vec<String>,
+    /// The features that failed to rebuild with the file's values.
+    pub errors: Vec<FailedFeature>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// Read again the shared parameter files that changed since this design read them, or the one
+/// at `path`, and rebuild with their values. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ParamFilesUpdateParams {
+    /// Only this file (as `parameters.files` lists it). Default: every file that changed.
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// What `parameters.update_files` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ParamFilesUpdated {
+    /// The files read again.
+    pub updated: Vec<ParamFileLinked>,
+    /// The files that had not changed, which were left as they are.
+    pub unchanged: Vec<String>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// Stop reading a shared parameter file. With `keep` (the default) its parameters stay as the
+/// design's own; without, they are deleted, refused while something uses one. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ParamFileUnlinkParams {
+    /// The file, as `parameters.files` lists it.
+    #[schemars(length(min = 1))]
+    pub path: String,
+    /// Keep its parameters as the design's own. Default: true.
+    #[serde(default)]
+    pub keep: Option<bool>,
+}
+
+/// What `parameters.unlink_file` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ParamFileUnlinked {
+    pub path: String,
+    /// The parameters the file gave.
+    pub names: Vec<String>,
+    /// Whether they stayed as the design's own.
+    pub kept: bool,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// Write user parameters to a new shared parameter file and read them from it from now on, so
+/// other designs can link the same file. Refused when the file exists already (link it
+/// instead). One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ParamShareParams {
+    /// The file to write (JSON).
+    #[schemars(length(min = 1))]
+    pub path: String,
+    /// The user parameters to share, by name. Default: every user parameter that isn't shared yet.
+    #[serde(default)]
+    pub names: Option<Vec<String>>,
+}
+
+/// What `parameters.share` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ParamShared {
+    /// The file as the design keeps it.
+    pub path: String,
+    /// The file written.
+    pub file: String,
+    /// The parameters it holds.
+    pub names: Vec<String>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// `parameters.files` takes no parameters.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ParamFilesParams {}
+
+/// One shared parameter file of the design, as `parameters.files` reports it.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ParamFileInfo {
+    /// The file as the design keeps it.
+    pub path: String,
+    /// Where it is looked for.
+    pub file: String,
+    /// The parameters it gives.
+    pub names: Vec<String>,
+    /// Whether the file is there; `null` when it is not looked for (a network location this
+    /// design may not reach).
+    pub found: Option<bool>,
+    /// Whether the file changed since this design read or wrote it: `parameters.update_files`
+    /// reads it again. `null` when it isn't found.
+    pub changed: Option<bool>,
+}
+
+/// What `parameters.files` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ParamFilesResult {
+    pub files: Vec<ParamFileInfo>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}

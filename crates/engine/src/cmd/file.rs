@@ -791,6 +791,10 @@ impl Session {
             if links != self.doc.links {
                 design.to_mut().links = links;
             }
+            let files = super::param_files::rebased(self, path);
+            if files != self.doc.param_files {
+                design.to_mut().param_files = files;
+            }
         }
         if !self.visibility.is_empty() {
             design.to_mut().visibility = self.visibility.clone();

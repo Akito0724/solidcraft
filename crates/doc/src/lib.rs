@@ -51,6 +51,7 @@ mod name_lookup;
 mod names;
 pub mod naming;
 mod occurrence_tree;
+pub mod param_files;
 mod params;
 pub mod persistent_name;
 pub mod physical_material;
@@ -103,6 +104,7 @@ pub use eval::{
 pub use eval::{EvalCache, KeptResults};
 pub use expr::Expr;
 pub use names::{BodyName, FeatureId, FeatureName, SketchId, copy_name};
+pub use param_files::{ParamFile, SharedApplied, SharedRow};
 pub use params::{ParamRow, ParamUser, cycles, name_words_match};
 pub use points::{Dir, FacePick, Position, plain};
 pub use solidcraft_kernel as kernel;

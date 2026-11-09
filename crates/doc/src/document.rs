@@ -3210,6 +3210,10 @@ pub struct Document {
     /// Components linked to another design file (by component id).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub links: std::collections::BTreeMap<u64, DesignLink>,
+    /// Shared parameter files this design reads ([`crate::param_files`]): their parameters are
+    /// among `params`, and each file notes which.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_files: Vec<crate::ParamFile>,
     /// Configurations (rows of parameter values and suppressions).
     #[serde(default, skip_serializing_if = "crate::config::ConfigTable::is_empty")]
     pub configs: crate::config::ConfigTable,
@@ -3538,6 +3542,7 @@ impl Document {
             configs: Default::default(),
             parts: Default::default(),
             links: Default::default(),
+            param_files: Vec::new(),
             body_components: Default::default(),
             body_offsets: Default::default(),
             materials: Default::default(),

@@ -96,6 +96,7 @@ pub(crate) use script::step_params;
 #[cfg(test)]
 mod kernel_heal_tests;
 mod panels;
+mod param_files;
 mod parameter_sweep;
 mod parameters;
 mod plastic;
@@ -364,6 +365,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(sketch_clipboard::COMMANDS.iter());
     v.extend(script::COMMANDS.iter());
     v.extend(parameters::COMMANDS.iter());
+    v.extend(param_files::COMMANDS.iter());
     v.extend(parameter_sweep::COMMANDS.iter());
     v.extend(file::COMMANDS.iter());
     v.extend(print_face::COMMANDS.iter());
