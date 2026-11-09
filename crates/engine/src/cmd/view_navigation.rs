@@ -127,7 +127,7 @@ CommandSpec::new("view.layout", "Workspace layout", crate::checked!("view.layout
 CommandSpec::new("view.history_layout", "History layout", crate::checked!("view.history_layout", history_layout))
     .icon("settings").noundo().doc_only().contract(&HISTORY_LAYOUT_CONTRACT).output(output_schema_for::<HistoryLayoutResult>).params("width?: 1..1000000; dock?: bottom|left|under_browser|browser (browser: the history in the browser, no timeline); collapsed?: bool → validated layout request; display only, never opens a dialog"),
 CommandSpec::new("view.graphics_preset", "Graphics Preset", crate::checked!("view.graphics_preset", graphics_preset))
-    .icon("settings").noundo().doc_only().contract(&GRAPHICS_PRESET_CONTRACT).output(output_schema_for::<GraphicsPresetResult>).params("preset: performance|quality → preset, enabled, display_quality, supersampling, supersampling_adaptive; Quality: AO, Fine, adaptive 2x SSAA; Performance: no AO, Normal, no SSAA"),
+    .icon("settings").noundo().doc_only().contract(&GRAPHICS_PRESET_CONTRACT).output(output_schema_for::<GraphicsPresetResult>).params("preset: performance|quality|steady → preset, enabled, display_quality, supersampling, supersampling_adaptive; Quality: AO, Fine, adaptive 2x SSAA; Performance: no AO, Normal, no SSAA; Steady: no AO, Fine, 2x SSAA kept while moving"),
 CommandSpec::new("view.ambient_occlusion", "Ambient Occlusion", crate::checked!("view.ambient_occlusion", ambient_occlusion))
     .icon("settings").noundo().doc_only().contract(&AMBIENT_OCCLUSION_CONTRACT).output(output_schema_for::<AmbientOcclusionResult>).params("enabled: bool → enabled; apply soft contact shading in the GPU viewport"),
 CommandSpec::new("view.perspective", "Perspective view", perspective)
@@ -1159,19 +1159,19 @@ fn graphics_preset(_s: &mut Session, p: &Value) -> Result<Value> {
     let preset = match p.get("preset").and_then(Value::as_str) {
         Some("quality") => GraphicsPreset::Quality,
         Some("performance") => GraphicsPreset::Performance,
-        _ => return Err(bad("view.graphics_preset", "preset must be performance or quality")),
+        Some("steady") => GraphicsPreset::Steady,
+        _ => return Err(bad("view.graphics_preset", "preset must be performance, quality or steady")),
     };
-    let enabled = preset == GraphicsPreset::Quality;
+    // Steady keeps the full picture while the view moves: no AO (whose moving frames take fewer
+    // samples) and supersampling that is not dropped while orbiting.
+    let (enabled, display_quality, supersampling, supersampling_adaptive) = match preset {
+        GraphicsPreset::Quality => (true, PresetQuality::Fine, 2.0, true),
+        GraphicsPreset::Performance => (false, PresetQuality::Normal, 1.0, true),
+        GraphicsPreset::Steady => (false, PresetQuality::Fine, 2.0, false),
+    };
     typed_reply(
         "view.graphics_preset",
-        GraphicsPresetResult {
-            preset,
-            enabled,
-            display_quality: if enabled { PresetQuality::Fine } else { PresetQuality::Normal },
-            supersampling: if enabled { 2.0 } else { 1.0 },
-            supersampling_adaptive: true,
-            param_warnings: Vec::new(),
-        },
+        GraphicsPresetResult { preset, enabled, display_quality, supersampling, supersampling_adaptive, param_warnings: Vec::new() },
     )
 }
 
@@ -1183,11 +1183,13 @@ mod graphics_preset_tests {
     fn presets_validate_without_changing_design_or_history() {
         let mut s = Session::default();
         let before = s.doc.to_json();
-        for (preset, enabled) in [("quality", true), ("performance", false)] {
+        for (preset, enabled, quality, supersampling, adaptive) in
+            [("quality", true, "fine", 2.0, true), ("performance", false, "normal", 1.0, true), ("steady", false, "fine", 2.0, false)]
+        {
             assert_eq!(
                 s.execute("view.graphics_preset", &json!({"preset":preset})).unwrap(),
-                json!({"preset":preset,"enabled":enabled,"display_quality":if enabled { "fine" } else { "normal" },
-                    "supersampling":if enabled { 2.0 } else { 1.0 },"supersampling_adaptive":true})
+                json!({"preset":preset,"enabled":enabled,"display_quality":quality,
+                    "supersampling":supersampling,"supersampling_adaptive":adaptive})
             );
         }
         for params in [json!({}), json!({"preset":"fast"}), json!({"preset":true}), json!({"preset":null})] {

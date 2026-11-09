@@ -12,6 +12,7 @@ combines AO with the display-quality and supersampling controls from #1319 and #
 |---|---|---|---|
 | Performance (default) | Off | Normal | Off (1×) |
 | Quality | On | Fine | 2×, only while the view is still |
+| Steady | Off | Fine | 2×, kept while the view moves |
 | Custom | Your manual combination | Your manual combination | Your manual combination |
 
 Custom is derived from the current settings, not a third preset that overwrites them.
@@ -27,7 +28,9 @@ The control channel and connected MCP clients can use the same command as the UI
 {"command":"view.ambient_occlusion","params":{"enabled":true}}
 ```
 
-`view.graphics_preset {"preset":"quality"}` (or `"performance"`) selects the preset.
+`view.graphics_preset {"preset":"quality"}` (or `"performance"`, `"steady"`) selects the preset.
+Steady draws a moving view exactly as a still one, so edges and shading do not change
+when orbiting starts or stops; it costs 2× supersampling on every frame.
 
 `ui.prefs {"ambient_occlusion": true}` also sets the preference. The command changes
 only display preferences, without adding a modelling undo step or moving the camera.

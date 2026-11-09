@@ -13,12 +13,13 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui_kit::settings_page(ui, |ui| {
         ui_kit::settings_heading(ui, app.tr("prefs.graphics"), app.tr("prefs.graphics_page.subtitle"));
         ui_kit::settings_section(ui, "preset", app.tr("navbar.preset"), |ui| {
-            let width = ((ui.available_width() - t.space_10 * 2.0) / 3.0).max(t.space_24 * 8.0 + t.space_12).min(ui.available_width());
+            let width = ((ui.available_width() - t.space_10 * 3.0) / 4.0).max(t.space_24 * 8.0 + t.space_12).min(ui.available_width());
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(t.space_10, t.space_10);
                 for (id, label, word) in [
                     ("performance", "ui.graphics_performance", "prefs.graphics_page.fastest"),
                     ("quality", "ui.graphics_quality", "prefs.graphics_page.sharpest"),
+                    ("steady", "ui.graphics_steady", "prefs.graphics_page.same_while_moving"),
                     ("custom", "ui.graphics_custom", "prefs.graphics_page.own_mix"),
                 ] {
                     let response = ui_kit::preset_card(
@@ -410,6 +411,13 @@ fn paint_preset_glyph(p: &egui::Painter, rect: egui::Rect, preset: &str, ink: eg
             line(&[(6.0, 4.0), (18.0, 4.0), (21.0, 9.0), (12.0, 20.0), (3.0, 9.0)], true);
             line(&[(3.0, 9.0), (21.0, 9.0)], false);
             line(&[(9.0, 4.0), (12.0, 20.0), (15.0, 4.0)], false);
+        }
+        "steady" => {
+            // A level: the picture holds still while the view turns.
+            line(&[(3.0, 9.0), (21.0, 9.0), (21.0, 15.0), (3.0, 15.0)], true);
+            p.circle_stroke(at(12.0, 12.0), 1.8 * s, stroke);
+            line(&[(8.0, 9.0), (8.0, 15.0)], false);
+            line(&[(16.0, 9.0), (16.0, 15.0)], false);
         }
         _ => {
             for (y, knob) in [(6.0, 9.0), (12.0, 15.0), (18.0, 8.0)] {

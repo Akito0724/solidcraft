@@ -1,0 +1,10 @@
+{
+  "en": {
+    "prefs.graphics_page.same_while_moving": "Same while moving",
+    "ui.graphics_steady": "Steady"
+  },
+  "ja": {
+    "prefs.graphics_page.same_while_moving": "動かしても同じ",
+    "ui.graphics_steady": "安定"
+  }
+}

@@ -472,7 +472,7 @@ fn display_menu(app: &SolveApp) -> Menu {
     let current = crate::prefs::graphics_preset(&app.preferences);
     let mut preset = MenuRow::new("preset", app.tr("navbar.preset"), "", "view:graphics_preset");
     preset.detail = Some(app.tr(&format!("ui.graphics_{current}")).to_owned());
-    preset.submenu = [("performance", "ui.graphics_performance"), ("quality", "ui.graphics_quality")]
+    preset.submenu = [("performance", "ui.graphics_performance"), ("quality", "ui.graphics_quality"), ("steady", "ui.graphics_steady")]
         .into_iter()
         .map(|(id, label)| row(id, app.tr(label), "", &format!("view:graphics_preset:{id}"), current == id))
         .collect();
@@ -521,7 +521,7 @@ fn display_menu(app: &SolveApp) -> Menu {
 /// A View menu pick.
 fn display_pick(app: &mut SolveApp, item: &str) {
     match item {
-        "performance" | "quality" => {
+        "performance" | "quality" | "steady" => {
             let _ = app.run("view.graphics_preset", json!({"preset":item}));
         }
         "navbar.orthographic" | "navbar.perspective" => {

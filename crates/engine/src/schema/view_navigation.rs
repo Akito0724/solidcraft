@@ -455,6 +455,9 @@ pub struct HistoryLayoutResult {
 pub enum GraphicsPreset {
     Performance,
     Quality,
+    /// The same picture while the view moves as when it holds still: no ambient occlusion, Fine,
+    /// 2x supersampling that stays on while orbiting.
+    Steady,
 }
 
 /// The tessellation a graphics preset asks for.
@@ -465,17 +468,18 @@ pub enum PresetQuality {
     Normal,
 }
 
-reads!(graphics_preset_value -> GraphicsPreset, "preset must be performance or quality");
+reads!(graphics_preset_value -> GraphicsPreset, "preset must be performance, quality or steady");
 
 /// `view.graphics_preset`: one preset for ambient occlusion, tessellation and supersampling.
 /// Quality: ambient occlusion on, Fine, adaptive 2x supersampling. Performance: no ambient
-/// occlusion, Normal, no supersampling. MSAA stays independent. A display setting the app keeps;
+/// occlusion, Normal, no supersampling. Steady: no ambient occlusion, Fine, 2x supersampling kept
+/// while the view moves, so orbiting looks the same as a still view. MSAA stays independent. A display setting the app keeps;
 /// the design is not changed.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields, transform = preset_required)]
 pub struct GraphicsPresetParams {
     // Optional in the type and required in the schema (`preset_required`), as `mode` above.
-    /// `performance` or `quality`.
+    /// `performance`, `quality` or `steady`.
     #[serde(default, deserialize_with = "graphics_preset_value", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "GraphicsPreset")]
     pub preset: Option<GraphicsPreset>,
@@ -488,7 +492,7 @@ pub struct GraphicsPresetResult {
     /// Ambient occlusion on or off.
     pub enabled: bool,
     pub display_quality: PresetQuality,
-    /// The supersampling factor: 2 for Quality, 1 for Performance.
+    /// The supersampling factor: 2 for Quality and Steady, 1 for Performance.
     pub supersampling: f64,
     pub supersampling_adaptive: bool,
     /// In the warn parameter-check mode: what the call's parameters got wrong.

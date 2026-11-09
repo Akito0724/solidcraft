@@ -11397,6 +11397,7 @@ pub(crate) fn graphics_preset(prefs: &Prefs) -> &'static str {
     match (prefs.ambient_occlusion, prefs.display_quality.as_str(), prefs.supersampling, prefs.supersampling_adaptive) {
         (false, "normal", 1.0, _) => "performance",
         (true, "fine", 2.0, true) => "quality",
+        (false, "fine", 2.0, false) => "steady",
         _ => "custom",
     }
 }
@@ -11436,6 +11437,14 @@ mod graphics_preset_tests {
             click_graphics(&mut h, "Ultra", "prefs:display_quality:ultra");
             assert_eq!(h.app.preferences.display_quality, "ultra");
             assert_eq!(graphics_preset(&h.app.preferences), "custom");
+            click_graphics(&mut h, "Steady", "view:graphics_preset:steady");
+            assert_eq!(graphics_preset(&h.app.preferences), "steady");
+            assert_eq!(
+                (h.app.preferences.display_quality.as_str(), h.app.preferences.supersampling, h.app.preferences.supersampling_adaptive),
+                ("fine", 2.0, false)
+            );
+            assert!(!h.app.preferences.ambient_occlusion);
+            assert_eq!(h.app.preferences.msaa, 2);
             click_graphics(&mut h, "Performance", "view:graphics_preset:performance");
             assert_eq!(graphics_preset(&h.app.preferences), "performance");
             assert_eq!(
