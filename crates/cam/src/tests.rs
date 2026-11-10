@@ -73,6 +73,22 @@ fn an_outside_contour_runs_clockwise_a_radius_outside_with_tabs_at_the_bottom() 
     assert!(t.moves.iter().any(|m| matches!(m, Move::Arc { ccw: false, .. })));
     // It ends at the safe height.
     assert_eq!(t.moves.last().map(|m| m.to().z), Some(10.0));
+    // Every move down into the wood, after a tab too, is at the plunge feed.
+    let mut z = f64::MAX;
+    for m in &t.moves {
+        if let Move::Feed { to, feed } = m
+            && to.z < z - 1e-9
+        {
+            assert!((feed - t.cutting.plunge_feed).abs() < 1e-9, "down to {} at {feed}", to.z);
+        }
+        z = m.to().z;
+    }
+    // One loop: the next level goes straight down where the last ended, without lifting.
+    let rapids_below_top = t.moves.iter().filter(|m| matches!(m, Move::Rapid(p) if p.z < 0.0)).count();
+    assert_eq!(rapids_below_top, 0);
+    // The first plunge is a rapid to just above the wood, then the plunge feed.
+    let first_feed = t.moves.iter().position(|m| matches!(m, Move::Feed { .. })).unwrap();
+    assert!(matches!(t.moves[first_feed - 1], Move::Rapid(p) if (p.z - 1.0).abs() < 1e-9), "{:?}", &t.moves[..first_feed]);
 }
 
 #[test]
@@ -162,7 +178,9 @@ fn grbl_programs_use_arcs_drop_repeated_words_and_end_safely() {
     assert!(text.contains("(hole  M20)"), "parentheses can't nest in a comment: {text}");
     assert!(!text.contains("NaN") && !text.contains("inf"));
     let tail: Vec<&str> = text.lines().rev().take(3).collect();
-    assert_eq!(tail, vec!["M30", "M5", "Z10"]);
+    // Up to the safe height at a rapid (written as G0 when the move before it fed).
+    assert_eq!(&tail[..2], ["M30", "M5"]);
+    assert!(tail[2] == "G0 Z10" || tail[2] == "Z10", "{tail:?}");
     assert_eq!(text.matches("Z10\n").count(), 2, "safe height at the start and once at the end");
     // The feed is written once until it changes.
     let feeds = text.lines().filter(|l| l.contains(" F")).count();

@@ -310,15 +310,24 @@ fn contour(b: &mut Builder, o: &ContourOp, job: &Job, c: &Clearance) -> Result<(
             if b.at.is_none() {
                 b.rapid(P3::new(start.x, start.y, c.safe_z));
             }
-            b.enter(start.x, start.y, link, link, z, job.cutting.plunge_feed);
+            // A single loop ends where it started, so the next level goes straight down there (the
+            // first goes down from just above the wood).
+            let here =
+                b.at.filter(|a| loops.len() == 1 && (a.x - start.x).abs() < 1e-6 && (a.y - start.y).abs() < 1e-6 && a.z > z && a.z <= above + 1e-9);
+            match here {
+                Some(_) => b.feed(P3::new(start.x, start.y, z), job.cutting.plunge_feed),
+                None => b.enter(start.x, start.y, link, link, z, job.cutting.plunge_feed),
+            }
             match (o.tabs, tab_top) {
                 (Some(t), Some(tz)) if z < tz - 1e-9 => {
                     let windows = tab_windows(l.length(), t, job.tool.diameter);
-                    around_with_tabs(b, l, z, tz, &windows, job.cutting.feed);
+                    around_with_tabs(b, l, z, tz, &windows, job.cutting.feed, job.cutting.plunge_feed);
                 }
                 _ => b.around(l, z, job.cutting.feed),
             }
-            b.retract(link);
+            if loops.len() > 1 {
+                b.retract(link);
+            }
         }
         above = z;
     }
@@ -334,8 +343,9 @@ pub(crate) fn tab_windows(length: f64, tabs: Tabs, diameter: f64) -> Vec<(f64, f
     (0..tabs.count).map(|i| (i as f64 + 0.5) * spacing).map(|mid| (mid - half, mid + half)).collect()
 }
 
-/// Once around `l` at `z`, rising to `tab_z` over the `windows`.
-fn around_with_tabs(b: &mut Builder, l: &Loop, z: f64, tab_z: f64, windows: &[(f64, f64)], feed: f64) {
+/// Once around `l` at `z`, rising to `tab_z` over the `windows`; going back down is at the
+/// `plunge` feed.
+fn around_with_tabs(b: &mut Builder, l: &Loop, z: f64, tab_z: f64, windows: &[(f64, f64)], feed: f64, plunge: f64) {
     let mut along = 0.0;
     let mut height = z;
     for seg in l.segments() {
@@ -352,7 +362,7 @@ fn around_with_tabs(b: &mut Builder, l: &Loop, z: f64, tab_z: f64, windows: &[(f
             let mid = along + len * (t0 + t1) / 2.0;
             let z_here = if windows.iter().any(|&(a, e)| mid > a && mid < e) { tab_z.max(z) } else { z };
             if (z_here - height).abs() > 1e-9 {
-                b.feed(P3::new(piece.from.0, piece.from.1, z_here), feed);
+                b.feed(P3::new(piece.from.0, piece.from.1, z_here), if z_here < height { plunge } else { feed });
                 height = z_here;
             }
             b.segment(&piece, z_here, feed);
@@ -363,7 +373,7 @@ fn around_with_tabs(b: &mut Builder, l: &Loop, z: f64, tab_z: f64, windows: &[(f
     if (height - z).abs() > 1e-9
         && let Some(at) = b.at
     {
-        b.feed(P3::new(at.x, at.y, z), feed);
+        b.feed(P3::new(at.x, at.y, z), plunge);
     }
 }
 
