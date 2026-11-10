@@ -140,10 +140,13 @@ fn tool_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(problem) = tool.problem() {
         return Err(bad(cmd, problem));
     }
+    let at = s.doc.cam.tools.iter().position(|t| t.number == q.number);
+    if at.is_none() && s.doc.cam.tools.len() >= MAX_ITEMS {
+        return Err(bad(cmd, "the tool library is full"));
+    }
     let cam = &mut s.doc_mut().cam;
-    match cam.tools.iter_mut().find(|t| t.number == q.number) {
+    match at.and_then(|i| cam.tools.get_mut(i)) {
         Some(slot) => *slot = tool,
-        None if cam.tools.len() >= MAX_ITEMS => return Err(bad(cmd, "the tool library is full")),
         None => cam.tools.push(tool),
     }
     cam.tools.sort_by_key(|t| t.number);
@@ -380,12 +383,15 @@ fn operation_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         None => existing.as_ref().map_or_else(|| format!("{} {}", kind_name(&spec), s.doc.cam.operations.len() + 1), |o| o.name.clone()),
     };
     let op = CamOperation { id, name, setup: setup_id, tool, spec, cutting };
+    let at = s.doc.cam.operations.iter().position(|o| o.id == id);
+    if at.is_none() && s.doc.cam.operations.len() >= MAX_ITEMS {
+        return Err(bad(cmd, "there are too many operations"));
+    }
     let before = (*s.doc).clone();
     {
         let cam = &mut s.doc_mut().cam;
-        match cam.operations.iter_mut().find(|o| o.id == id) {
+        match at.and_then(|i| cam.operations.get_mut(i)) {
             Some(slot) => *slot = op.clone(),
-            None if cam.operations.len() >= MAX_ITEMS => return Err(bad(cmd, "there are too many operations")),
             None => cam.operations.push(op.clone()),
         }
     }
