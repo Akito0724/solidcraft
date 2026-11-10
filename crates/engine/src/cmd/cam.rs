@@ -271,7 +271,7 @@ fn toolpath(s: &Session, id: u64) -> std::result::Result<Toolpath, String> {
     let st = s.model.state();
     let plan = s.doc.cam_plan(&st, op.setup).map_err(|e| e.to_string())?;
     let job = plan.jobs.into_iter().find(|(o, _)| *o == id).map(|(_, j)| j).ok_or_else(|| format!("there is no operation {id}"))??;
-    solidcraft_cam::generate(&job, &plan.clearance).map_err(|e| format!("{}: {e}", op.name))
+    solidcraft_cam::generate(&job, &plan.clearance).map_err(|e| named(&op.name, &e))
 }
 
 fn summary(op: &CamOperation, path: std::result::Result<&Toolpath, &String>) -> CamOpSummary {
@@ -446,7 +446,7 @@ fn setup_paths(s: &Session, id: u64) -> std::result::Result<Vec<(CamOperation, s
         .into_iter()
         .filter_map(|(op_id, job)| {
             let op = s.doc.cam.operations.iter().find(|o| o.id == op_id)?.clone();
-            let path = job.and_then(|j| solidcraft_cam::generate(&j, &plan.clearance).map_err(|e| format!("{}: {e}", op.name)));
+            let path = job.and_then(|j| solidcraft_cam::generate(&j, &plan.clearance).map_err(|e| named(&op.name, &e)));
             Some((op, path))
         })
         .collect())
@@ -522,6 +522,12 @@ fn export_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         });
     }
     reply(cmd, CamExported { files, param_warnings: Vec::new() })
+}
+
+/// An operation's error, with its name in front unless the toolpath's own message already has it.
+fn named(name: &str, e: &dyn std::fmt::Display) -> String {
+    let e = e.to_string();
+    if e.starts_with(&format!("{name}:")) { e } else { format!("{name}: {e}") }
 }
 
 #[cfg(test)]

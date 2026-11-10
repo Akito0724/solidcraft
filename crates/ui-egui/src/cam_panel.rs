@@ -452,7 +452,7 @@ mod tests {
     #[test]
     fn the_window_adds_a_tool_a_setup_and_a_contour_from_the_selected_face() {
         let mut h = Harness::new();
-        h.app.run("solid.box", json!({"length": 60, "width": 40, "height": 12})).unwrap();
+        h.app.run("solid.box", json!({"length": 60, "width": 40, "height": 8})).unwrap();
         h.step(&json!({"start": "cam.generate"})).unwrap();
         assert!(h.app.machining.is_some(), "ui.start opens the window");
         h.frames(2);
