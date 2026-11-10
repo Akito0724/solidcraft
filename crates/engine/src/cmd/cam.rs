@@ -665,8 +665,10 @@ mod tests {
         // Around the block, a tool radius outside it, down to just below its bottom.
         let r = 3.175 / 2.0;
         for p in &cuts {
-            let outside = p[0] <= -r + 1e-3 || p[0] >= 60.0 + r - 1e-3 || p[1] <= -r + 1e-3 || p[1] >= 40.0 + r - 1e-3;
-            assert!(outside, "{p:?} cuts into the block");
+            // How far the tool centre is from the block (around its corners too).
+            let dx = (-p[0]).max(p[0] - 60.0).max(0.0);
+            let dy = (-p[1]).max(p[1] - 40.0).max(0.0);
+            assert!(dx.hypot(dy) >= r - 1e-3, "{p:?} cuts into the block");
         }
         let low = cuts.iter().map(|p| p[2]).fold(f64::MAX, f64::min);
         assert!((low + 0.5).abs() < 1e-6, "{low}");
