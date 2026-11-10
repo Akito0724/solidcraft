@@ -610,7 +610,7 @@ pub struct SolveApp {
     /// The Bill of Materials window, when open.
     pub bom: Option<bom_panel::BomPanel>,
     /// The Machining window (`cam.generate` from the ribbon), when open.
-    pub cam: Option<cam_panel::CamPanel>,
+    pub machining: Option<cam_panel::CamPanel>,
     material_card_review: Option<material_card_review::ReviewWindow>,
     /// Context menus, rename box and Properties window.
     pub menu: context_menu::MenuState,
@@ -897,7 +897,7 @@ impl SolveApp {
             design_properties: None,
             sketch_report: None,
             bom: None,
-            cam: None,
+            machining: None,
             material_card_review: None,
             menu: context_menu::MenuState::default(),
             gesture: mouse_gesture::State::default(),

@@ -192,8 +192,8 @@ impl CamPanel {
 
 /// Open the window.
 pub fn open(app: &mut SolveApp) {
-    if app.cam.is_none() {
-        app.cam = Some(CamPanel::default());
+    if app.machining.is_none() {
+        app.machining = Some(CamPanel::default());
     }
 }
 
@@ -230,7 +230,7 @@ fn heading(ui: &mut egui::Ui, label: &str) {
 
 /// Draw the window when it is open. Called once per frame.
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
-    let Some(mut d) = app.cam.take() else { return };
+    let Some(mut d) = app.machining.take() else { return };
     let t = Tokens::get();
     let generated = d.generated(app);
     let tools: Vec<Value> = generated["tools"].as_array().cloned().unwrap_or_default();
@@ -390,7 +390,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         run(app, &mut d, a, &tools, &selection);
     }
     if !closed {
-        app.cam = Some(d);
+        app.machining = Some(d);
     }
 }
 
@@ -420,7 +420,7 @@ fn run(app: &mut SolveApp, d: &mut CamPanel, action: Action, tools: &[Value], se
             app.pick_save("part.nc", &["nc", "gcode"], move |app, path| {
                 let Some(path) = path else { return };
                 let r = app.run("cam.export", json!({"path": path, "setup": setup}));
-                if let Some(panel) = app.cam.as_mut() {
+                if let Some(panel) = app.machining.as_mut() {
                     match r {
                         Ok(v) => {
                             let files: Vec<String> = v["files"].as_array().into_iter().flatten().map(|f| text(&f["path"])).collect();
@@ -454,7 +454,7 @@ mod tests {
         let mut h = Harness::new();
         h.app.run("solid.box", json!({"length": 60, "width": 40, "height": 12})).unwrap();
         h.step(&json!({"start": "cam.generate"})).unwrap();
-        assert!(h.app.cam.is_some(), "ui.start opens the window");
+        assert!(h.app.machining.is_some(), "ui.start opens the window");
         h.frames(2);
         assert!(h.widget("Export G-code…").is_some());
         h.step(&json!({"widget": "Add Tool"})).unwrap();
@@ -470,13 +470,13 @@ mod tests {
         let faces = body.body.faces(0.1).unwrap();
         let top = faces.iter().filter(|f| f.plane_normal.is_some()).max_by(|a, b| a.centroid.z.total_cmp(&b.centroid.z)).unwrap();
         h.app.session.selection = vec![Sel::Face { body: body.name.clone(), index: top.index, point: top.centroid }];
-        h.app.cam.as_mut().unwrap().kind = 2;
+        h.app.machining.as_mut().unwrap().kind = 2;
         h.frames(2);
         h.step(&json!({"widget": "Add Operation"})).unwrap();
         h.frames(2);
         let cam = h.app.session.execute("cam.generate", &json!({})).unwrap();
         let ops = cam["setups"][0]["operations"].as_array().cloned().unwrap_or_default();
-        assert_eq!(ops.len(), 1, "{cam} {:?}", h.app.cam.as_ref().unwrap().error);
+        assert_eq!(ops.len(), 1, "{cam} {:?}", h.app.machining.as_ref().unwrap().error);
         assert_eq!(ops[0]["kind"], "contour");
     }
 
@@ -488,11 +488,11 @@ mod tests {
         h.app.run("cam.setup", json!({})).unwrap();
         h.step(&json!({"start": "cam.generate"})).unwrap();
         h.app.session.selection.clear();
-        h.app.cam.as_mut().unwrap().kind = 1;
+        h.app.machining.as_mut().unwrap().kind = 1;
         h.frames(2);
         let undo = h.app.session.undo.len();
         h.step(&json!({"widget": "Add Operation"})).unwrap();
-        assert!(h.app.cam.as_ref().unwrap().error.is_some());
+        assert!(h.app.machining.as_ref().unwrap().error.is_some());
         assert_eq!(h.app.session.undo.len(), undo, "nothing added");
     }
 }
