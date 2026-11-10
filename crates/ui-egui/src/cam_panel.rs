@@ -7,6 +7,7 @@
 
 use egui::RichText;
 use serde_json::{Value, json};
+use solidcore_record::Vec3;
 use solidcraft_engine::Sel;
 use solidcraft_theme::Tokens;
 use solidcraft_ui_text::{tr, tr_label};
@@ -56,6 +57,17 @@ pub struct CamPanel {
     pub error: Option<String>,
     /// What the last export wrote.
     pub notice: Option<String>,
+    /// Draw the picked setup's toolpaths over the model.
+    pub show_paths: bool,
+    /// `cam.toolpaths` for a design revision and setup, as lines to draw.
+    paths: Option<(u64, u64, PathLines)>,
+}
+
+/// A setup's toolpaths in model coordinates: cutting runs and rapid moves.
+#[derive(Clone, Default)]
+pub struct PathLines {
+    pub cuts: Vec<Vec<Vec3>>,
+    pub rapids: Vec<[Vec3; 2]>,
 }
 
 impl Default for CamPanel {
@@ -82,6 +94,8 @@ impl Default for CamPanel {
             peck: "0".into(),
             error: None,
             notice: None,
+            show_paths: true,
+            paths: None,
         }
     }
 }
@@ -119,6 +133,21 @@ impl CamPanel {
         };
         self.cache = Some((revision, v.clone()));
         v
+    }
+
+    /// The picked setup's toolpaths (worked out again only after a change).
+    fn lines(&mut self, app: &mut SolveApp) -> Option<PathLines> {
+        let setup = self.setup?;
+        let revision = app.session.revision;
+        if let Some((r, s, lines)) = &self.paths
+            && *r == revision
+            && *s == setup
+        {
+            return Some(lines.clone());
+        }
+        let lines = app.session.execute("cam.toolpaths", &json!({"setup": setup})).map(|v| path_lines(&v)).unwrap_or_default();
+        self.paths = Some((revision, setup, lines.clone()));
+        Some(lines)
     }
 
     fn tool_params(&self) -> Result<Value, String> {
@@ -187,6 +216,52 @@ impl CamPanel {
             p["tabs"] = json!({"count": count, "width": number(&self.tab_width).unwrap_or(6.0), "height": number(&self.tab_height).unwrap_or(2.0)});
         }
         Ok(p)
+    }
+}
+
+fn point(v: &Value) -> Option<Vec3> {
+    let a = v.as_array()?;
+    Some(Vec3::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?))
+}
+
+/// `cam.toolpaths`'s reply as lines.
+fn path_lines(v: &Value) -> PathLines {
+    let mut out = PathLines::default();
+    for p in v["paths"].as_array().into_iter().flatten() {
+        for run in p["cuts"].as_array().into_iter().flatten() {
+            let pts: Vec<Vec3> = run.as_array().into_iter().flatten().filter_map(point).collect();
+            if pts.len() > 1 {
+                out.cuts.push(pts);
+            }
+        }
+        for r in p["rapids"].as_array().into_iter().flatten() {
+            if let (Some(a), Some(b)) = (r.get(0).and_then(point), r.get(1).and_then(point)) {
+                out.rapids.push([a, b]);
+            }
+        }
+    }
+    out
+}
+
+/// Draw the open window's toolpaths over the model: cuts in the accent colour, rapids dashed.
+pub fn paint_toolpaths(app: &mut SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
+    let Some(mut d) = app.machining.take() else { return };
+    let lines = if d.show_paths { d.lines(app) } else { None };
+    app.machining = Some(d);
+    let Some(lines) = lines else { return };
+    let t = Tokens::get();
+    let cut = egui::Stroke::new(1.5, t.accent);
+    for run in &lines.cuts {
+        let pts: Vec<egui::Pos2> = run.iter().filter_map(|p| proj.to_screen(*p)).collect();
+        if pts.len() == run.len() {
+            painter.add(egui::Shape::line(pts, cut));
+        }
+    }
+    let rapid = egui::Stroke::new(1.0, t.text_dim);
+    for [a, b] in &lines.rapids {
+        if let (Some(sa), Some(sb)) = (proj.to_screen(*a), proj.to_screen(*b)) {
+            painter.extend(crate::ui_kit::dashed_line(&[sa, sb], painter.clip_rect(), rapid, 4.0, 3.0));
+        }
     }
 }
 
@@ -309,6 +384,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 
             // Operations of the picked setup.
             heading(ui, "Operations");
+            crate::ui_kit::checkbox(ui, tr_label("Show toolpaths"), &mut d.show_paths);
             let picked = setups.iter().find(|s| s["id"].as_u64() == d.setup);
             let mut total = 0.0;
             if let Some(s) = picked {
@@ -440,6 +516,7 @@ fn run(app: &mut SolveApp, d: &mut CamPanel, action: Action, tools: &[Value], se
     }
     // The lists follow the change at once, even when the revision didn't move.
     d.cache = None;
+    d.paths = None;
 }
 
 #[cfg(test)]
@@ -478,6 +555,13 @@ mod tests {
         let ops = cam["setups"][0]["operations"].as_array().cloned().unwrap_or_default();
         assert_eq!(ops.len(), 1, "{cam} {:?}", h.app.machining.as_ref().unwrap().error);
         assert_eq!(ops[0]["kind"], "contour");
+        // The window draws the new contour over the model, and stops when it is turned off.
+        let mut d = h.app.machining.take().unwrap();
+        let lines = d.lines(&mut h.app).unwrap();
+        assert!(!lines.cuts.is_empty() && !lines.rapids.is_empty());
+        d.show_paths = false;
+        h.app.machining = Some(d);
+        h.frames(2);
     }
 
     #[test]

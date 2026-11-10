@@ -230,3 +230,20 @@ fn starting_cutting_data_suits_the_material() {
     assert!(wood.feed > alu.feed && wood.stepdown > alu.stepdown);
     assert!(wood.problem().is_none() && alu.problem().is_none());
 }
+
+#[test]
+fn a_toolpath_draws_as_points_with_its_arcs_in_short_pieces() {
+    let tool = Tool::endmill(1, 3.175, 2, 12.0);
+    let op = ContourOp { profile: Loop::circle(0.0, 0.0, 10.0), side: Side::On, depths: Depths { top: 0.0, bottom: -1.0 }, tabs: None };
+    let t = generate(&job("ring", Operation::Contour(op), tool), &Clearance::default()).unwrap();
+    let points = t.points(1.0);
+    assert!(points.len() > 60, "a 10 mm circle in 1 mm pieces: {}", points.len());
+    assert!(points.first().is_some_and(|(_, rapid)| *rapid));
+    // Every point on the cut is on the circle.
+    for (p, rapid) in &points {
+        if !rapid && (p.z + 1.0).abs() < 1e-9 {
+            assert!((p.x.hypot(p.y) - 10.0).abs() < 1e-6, "{p:?}");
+        }
+    }
+    assert!(t.points(f64::NAN).len() > 2, "a bad step still draws");
+}

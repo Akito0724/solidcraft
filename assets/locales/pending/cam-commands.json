@@ -5,7 +5,8 @@
     "cmd.cam_operation": "Machining Operation",
     "cmd.cam_delete": "Delete Machining",
     "cmd.cam_generate": "Generate Toolpaths",
-    "cmd.cam_export": "Export G-code"
+    "cmd.cam_export": "Export G-code",
+    "cmd.cam_toolpaths": "Show Toolpaths"
   },
   "ja": {
     "cmd.cam_tool": "加工工具",
@@ -13,7 +14,8 @@
     "cmd.cam_operation": "加工工程",
     "cmd.cam_delete": "加工を削除",
     "cmd.cam_generate": "ツールパスを生成",
-    "cmd.cam_export": "G-codeを書き出し"
+    "cmd.cam_export": "G-codeを書き出し",
+    "cmd.cam_toolpaths": "ツールパスを表示"
   },
   "zh": {
     "cmd.cam_tool": "加工刀具",
@@ -21,7 +23,8 @@
     "cmd.cam_operation": "加工工序",
     "cmd.cam_delete": "删除加工",
     "cmd.cam_generate": "生成刀具路径",
-    "cmd.cam_export": "导出 G 代码"
+    "cmd.cam_export": "导出 G 代码",
+    "cmd.cam_toolpaths": "显示刀具路径"
   },
   "vi": {
     "cmd.cam_tool": "Dao gia công",
@@ -29,7 +32,8 @@
     "cmd.cam_operation": "Nguyên công gia công",
     "cmd.cam_delete": "Xóa gia công",
     "cmd.cam_generate": "Tạo đường chạy dao",
-    "cmd.cam_export": "Xuất G-code"
+    "cmd.cam_export": "Xuất G-code",
+    "cmd.cam_toolpaths": "Hiện đường chạy dao"
   },
   "ar": {
     "cmd.cam_tool": "أداة التشغيل",
@@ -37,7 +41,8 @@
     "cmd.cam_operation": "عملية التشغيل",
     "cmd.cam_delete": "حذف التشغيل",
     "cmd.cam_generate": "إنشاء مسارات الأداة",
-    "cmd.cam_export": "تصدير G-code"
+    "cmd.cam_export": "تصدير G-code",
+    "cmd.cam_toolpaths": "إظهار مسارات الأداة"
   },
   "he": {
     "cmd.cam_tool": "כלי עיבוד",
@@ -45,6 +50,7 @@
     "cmd.cam_operation": "פעולת עיבוד",
     "cmd.cam_delete": "מחיקת עיבוד",
     "cmd.cam_generate": "יצירת מסלולי כלי",
-    "cmd.cam_export": "ייצוא G-code"
+    "cmd.cam_export": "ייצוא G-code",
+    "cmd.cam_toolpaths": "הצגת מסלולי כלי"
   }
 }

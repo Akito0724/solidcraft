@@ -94,6 +94,31 @@ impl Toolpath {
         minutes * 60.0
     }
 
+    /// The path as points to draw, each with whether the move to it is a rapid; arcs become short
+    /// straight pieces no longer than `step` (mm, at most 256 per arc).
+    pub fn points(&self, step: f64) -> Vec<(P3, bool)> {
+        let step = if step.is_finite() && step > 1e-3 { step } else { 1.0 };
+        let mut out = Vec::with_capacity(self.moves.len());
+        let mut at: Option<P3> = None;
+        for m in &self.moves {
+            let to = m.to();
+            match (m, at) {
+                (Move::Arc { center, ccw, .. }, Some(from)) => {
+                    let seg = arc_segment(from, to, *center, *ccw);
+                    let n = (seg.length() / step).ceil().clamp(2.0, 256.0) as usize;
+                    for i in 1..=n {
+                        let t = i as f64 / n as f64;
+                        let (x, y) = if i == n { (to.x, to.y) } else { seg.at(t) };
+                        out.push((P3::new(x, y, from.z + (to.z - from.z) * t), false));
+                    }
+                }
+                (m, _) => out.push((to, matches!(m, Move::Rapid(_)))),
+            }
+            at = Some(to);
+        }
+        out
+    }
+
     /// The lowest Z the tool reaches, if it moves at all.
     pub fn lowest_z(&self) -> Option<f64> {
         self.moves.iter().map(|m| m.to().z).reduce(f64::min)

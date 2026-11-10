@@ -45,7 +45,8 @@
     "cam.panel.face_hint": "التسوية تجعل أعلى الخامة مستويًا حتى العمق (الافتراضي: أعلى القطعة).",
     "cam.panel.add_a_tool": "أضف أداة وإعدادًا أولًا.",
     "cam.panel.no_setup": "أنشئ إعدادًا أولًا.",
-    "help.cam.generate": "يفتح نافذة التشغيل: الأدوات والإعدادات والعمليات لآلة CNC، مع مسارات الأداة وتصدير G-code. استخدمها لتحويل قطعة إلى برامج GRBL، برنامج لكل أداة."
+    "help.cam.generate": "يفتح نافذة التشغيل: الأدوات والإعدادات والعمليات لآلة CNC، مع مسارات الأداة وتصدير G-code. استخدمها لتحويل قطعة إلى برامج GRBL، برنامج لكل أداة.",
+    "Show toolpaths": "إظهار مسارات الأداة"
   },
   "en": {
     "MACHINING": "MACHINING",
@@ -93,7 +94,8 @@
     "cam.panel.face_hint": "Facing flattens the stock's top down to the depth (default: the part's top).",
     "cam.panel.add_a_tool": "Add a tool and a setup first.",
     "cam.panel.no_setup": "Make a setup first.",
-    "help.cam.generate": "Opens the Machining window: tools, setups and operations for your CNC router, with their toolpaths and G-code export. Use it to turn a part into GRBL programs, one per tool."
+    "help.cam.generate": "Opens the Machining window: tools, setups and operations for your CNC router, with their toolpaths and G-code export. Use it to turn a part into GRBL programs, one per tool.",
+    "Show toolpaths": "Show toolpaths"
   },
   "he": {
     "MACHINING": "עיבוד",
@@ -141,7 +143,8 @@
     "cam.panel.face_hint": "יישור משטח מיישר את ראש חומר הגלם עד לעומק (ברירת מחדל: ראש החלק).",
     "cam.panel.add_a_tool": "הוסיפו קודם כלי והגדרת עיבוד.",
     "cam.panel.no_setup": "צרו קודם הגדרת עיבוד.",
-    "help.cam.generate": "פותח את חלון העיבוד: כלים, הגדרות ופעולות לנתב CNC, עם מסלולי הכלי וייצוא G-code. השתמשו בו כדי להפוך חלק לתוכניות GRBL, אחת לכל כלי."
+    "help.cam.generate": "פותח את חלון העיבוד: כלים, הגדרות ופעולות לנתב CNC, עם מסלולי הכלי וייצוא G-code. השתמשו בו כדי להפוך חלק לתוכניות GRBL, אחת לכל כלי.",
+    "Show toolpaths": "הצגת מסלולי כלי"
   },
   "ja": {
     "MACHINING": "加工",
@@ -189,7 +192,8 @@
     "cam.panel.face_hint": "面削りは材料の上面を深さまで平らにします（既定: 部品の上面まで）。",
     "cam.panel.add_a_tool": "先に工具とセットアップを追加してください。",
     "cam.panel.no_setup": "先にセットアップを作ってください。",
-    "help.cam.generate": "加工ウィンドウを開きます。CNCルーター用の工具・セットアップ・工程とツールパス、G-codeの書き出しを扱います。部品を工具ごとのGRBLプログラムにするときに使います。"
+    "help.cam.generate": "加工ウィンドウを開きます。CNCルーター用の工具・セットアップ・工程とツールパス、G-codeの書き出しを扱います。部品を工具ごとのGRBLプログラムにするときに使います。",
+    "Show toolpaths": "ツールパスを表示"
   },
   "vi": {
     "MACHINING": "GIA CÔNG",
@@ -237,7 +241,8 @@
     "cam.panel.face_hint": "Phay mặt làm phẳng mặt trên phôi tới độ sâu (mặc định: mặt trên chi tiết).",
     "cam.panel.add_a_tool": "Hãy thêm dao và thiết lập trước.",
     "cam.panel.no_setup": "Hãy tạo thiết lập trước.",
-    "help.cam.generate": "Mở cửa sổ Gia công: dao, thiết lập và nguyên công cho máy CNC, với đường chạy dao và xuất G-code. Dùng để biến chi tiết thành chương trình GRBL, mỗi dao một chương trình."
+    "help.cam.generate": "Mở cửa sổ Gia công: dao, thiết lập và nguyên công cho máy CNC, với đường chạy dao và xuất G-code. Dùng để biến chi tiết thành chương trình GRBL, mỗi dao một chương trình.",
+    "Show toolpaths": "Hiện đường chạy dao"
   },
   "zh": {
     "MACHINING": "加工",
@@ -285,6 +290,7 @@
     "cam.panel.face_hint": "平面铣把毛坯顶面铣平到指定深度（默认：零件顶面）。",
     "cam.panel.add_a_tool": "请先添加刀具和设置。",
     "cam.panel.no_setup": "请先新建设置。",
-    "help.cam.generate": "打开加工窗口：为 CNC 雕刻机管理刀具、设置和工序，查看刀具路径并导出 G 代码。用它把零件变成每把刀一个的 GRBL 程序。"
+    "help.cam.generate": "打开加工窗口：为 CNC 雕刻机管理刀具、设置和工序，查看刀具路径并导出 G 代码。用它把零件变成每把刀一个的 GRBL 程序。",
+    "Show toolpaths": "显示刀具路径"
   }
 }

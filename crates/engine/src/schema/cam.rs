@@ -293,3 +293,43 @@ pub struct CamExported {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }
+
+/// The toolpaths of a setup in model coordinates, to draw over the model.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CamToolpathsParams {
+    /// Default: the only setup.
+    #[serde(default)]
+    pub setup: Option<u64>,
+    /// Longest straight piece an arc is drawn with (mm). Default 1.
+    #[serde(default)]
+    pub step: Option<f64>,
+}
+
+/// One operation's toolpath as runs of points: cutting runs and rapid moves apart.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CamPathLines {
+    pub operation: u64,
+    pub name: String,
+    pub tool: u32,
+    /// Runs of points the tool cuts along (model coordinates, mm).
+    pub cuts: Vec<Vec<[f64; 3]>>,
+    /// Rapid moves, from and to.
+    pub rapids: Vec<[[f64; 3]; 2]>,
+    /// Why its toolpath can't be made, when it can't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// What `cam.toolpaths` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CamToolpaths {
+    pub setup: u64,
+    pub paths: Vec<CamPathLines>,
+    /// True when the points were cut short (very long toolpaths).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}

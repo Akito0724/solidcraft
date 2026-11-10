@@ -12,7 +12,8 @@ use super::design_link::absolute;
 use crate::params::bad;
 use crate::schema::cam::{
     CamDeleteParams, CamDeleted, CamExportParams, CamExported, CamGenerateParams, CamGenerated, CamOpSummary, CamOperationParams, CamOperationResult,
-    CamPickParam, CamProgram, CamSetupParams, CamSetupResult, CamSetupSummary, CamToolInfo, CamToolParams, CamToolsResult,
+    CamPathLines, CamPickParam, CamProgram, CamSetupParams, CamSetupResult, CamSetupSummary, CamToolInfo, CamToolParams, CamToolpaths,
+    CamToolpathsParams, CamToolsResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -23,6 +24,7 @@ const OPERATION_CONTRACT: TypedContract<CamOperationParams> = TypedContract::new
 const DELETE_CONTRACT: TypedContract<CamDeleteParams> = TypedContract::new();
 const GENERATE_CONTRACT: TypedContract<CamGenerateParams> = TypedContract::new();
 const EXPORT_CONTRACT: TypedContract<CamExportParams> = TypedContract::new();
+const TOOLPATHS_CONTRACT: TypedContract<CamToolpathsParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("cam.tool", "Machining Tool", crate::checked!("cam.tool", tool_cmd))
@@ -65,7 +67,16 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&EXPORT_CONTRACT)
         .output(output_schema_for::<CamExported>)
         .params("path, setup? (default the only one), arcs?: bool (default true) → files [{path, tool, operations, minutes}]; one GRBL program per tool"),
+    CommandSpec::new("cam.toolpaths", "Show Toolpaths", crate::checked!("cam.toolpaths", toolpaths_cmd))
+        .icon("update")
+        .noundo()
+        .contract(&TOOLPATHS_CONTRACT)
+        .output(output_schema_for::<CamToolpaths>)
+        .params("setup? (default the only one), step? (mm, default 1) → setup, paths [{operation, name, tool, cuts [[[x,y,z]…]…], rapids [[from, to]…], error?}], truncated?; model coordinates"),
 ];
+
+/// Most points `cam.toolpaths` returns.
+const MAX_POINTS: usize = 400_000;
 
 /// Rapid speed assumed for time estimates (mm/min).
 const RAPID_SPEED: f64 = 3000.0;
@@ -524,6 +535,64 @@ fn export_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     reply(cmd, CamExported { files, param_warnings: Vec::new() })
 }
 
+fn toolpaths_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.toolpaths";
+    let q: CamToolpathsParams = parse(cmd, p)?;
+    let step = match q.step {
+        Some(v) if !(v.is_finite() && (0.01..=100.0).contains(&v)) => return Err(bad(cmd, "step is between 0.01 and 100 mm")),
+        Some(v) => v,
+        None => 1.0,
+    };
+    let setup = which_setup(s, cmd, q.setup)?;
+    let s: &Session = s;
+    let frame = s.doc.cam_plan(&s.model.state(), setup).map_err(|e| bad(cmd, e.to_string()))?.frame;
+    let list = setup_paths(s, setup).map_err(|e| bad(cmd, e))?;
+    let model = |p: solidcraft_cam::P3| frame.to_model([p.x, p.y, p.z]).map(|v| round(v, 4));
+    let mut budget = MAX_POINTS;
+    let mut truncated = false;
+    let mut paths = Vec::new();
+    for (op, path) in list {
+        let mut lines = CamPathLines { operation: op.id, name: op.name.clone(), tool: op.tool, cuts: Vec::new(), rapids: Vec::new(), error: None };
+        match path {
+            Err(e) => lines.error = Some(e),
+            Ok(t) => {
+                let mut last: Option<[f64; 3]> = None;
+                let mut run: Vec<[f64; 3]> = Vec::new();
+                for (p, rapid) in t.points(step) {
+                    if budget == 0 {
+                        truncated = true;
+                        break;
+                    }
+                    budget -= 1;
+                    let p = model(p);
+                    if rapid {
+                        if run.len() > 1 {
+                            lines.cuts.push(std::mem::take(&mut run));
+                        }
+                        run.clear();
+                        if let Some(from) = last {
+                            lines.rapids.push([from, p]);
+                        }
+                    } else if run.is_empty()
+                        && let Some(from) = last
+                    {
+                        run.push(from);
+                    }
+                    if !rapid {
+                        run.push(p);
+                    }
+                    last = Some(p);
+                }
+                if run.len() > 1 {
+                    lines.cuts.push(run);
+                }
+            }
+        }
+        paths.push(lines);
+    }
+    reply(cmd, CamToolpaths { setup, paths, truncated, param_warnings: Vec::new() })
+}
+
 /// An operation's error, with its name in front unless the toolpath's own message already has it.
 fn named(name: &str, e: &dyn std::fmt::Display) -> String {
     let e = e.to_string();
@@ -580,6 +649,35 @@ mod tests {
         s.execute("cam.setup", &json!({"id": id, "flipped": true})).unwrap();
         let again = s.execute("cam.generate", &json!({"setup": id})).unwrap();
         assert!(again["setups"][0]["operations"][1].get("error").is_none(), "{again}");
+    }
+
+    #[test]
+    fn toolpaths_are_drawn_where_the_model_is_and_follow_a_turned_over_part() {
+        let mut s = block();
+        s.execute("cam.tool", &json!({"number": 2, "diameter": 3.175, "flute_length": 20})).unwrap();
+        assert!(s.execute("cam.toolpaths", &json!({})).is_err(), "no setup yet");
+        let setup = s.execute("cam.setup", &json!({})).unwrap();
+        s.execute("cam.operation", &json!({"type": "contour", "tool": 2, "face": {"at": [10, 10, 10]}})).unwrap();
+        let shown = s.execute("cam.toolpaths", &json!({})).unwrap();
+        let path = &shown["paths"][0];
+        let cuts: Vec<[f64; 3]> = serde_json::from_value::<Vec<Vec<[f64; 3]>>>(path["cuts"].clone()).unwrap().concat();
+        assert!(!cuts.is_empty() && !path["rapids"].as_array().unwrap().is_empty(), "{shown}");
+        // Around the block, a tool radius outside it, down to just below its bottom.
+        let r = 3.175 / 2.0;
+        for p in &cuts {
+            let outside = p[0] <= -r + 1e-3 || p[0] >= 60.0 + r - 1e-3 || p[1] <= -r + 1e-3 || p[1] >= 40.0 + r - 1e-3;
+            assert!(outside, "{p:?} cuts into the block");
+        }
+        let low = cuts.iter().map(|p| p[2]).fold(f64::MAX, f64::min);
+        assert!((low + 0.5).abs() < 1e-6, "{low}");
+        // Turned over, the cut ends past the stock's far side, now above it (1 mm of stock on top).
+        let id = setup["id"].as_u64().unwrap();
+        s.execute("cam.setup", &json!({"id": id, "flipped": true})).unwrap();
+        let flipped = s.execute("cam.toolpaths", &json!({"setup": id})).unwrap();
+        let cuts: Vec<[f64; 3]> = serde_json::from_value::<Vec<Vec<[f64; 3]>>>(flipped["paths"][0]["cuts"].clone()).unwrap().concat();
+        let high = cuts.iter().map(|p| p[2]).fold(f64::MIN, f64::max);
+        assert!((high - 11.5).abs() < 1e-6, "{high}");
+        assert!(s.execute("cam.toolpaths", &json!({"step": 0})).is_err());
     }
 
     #[test]
