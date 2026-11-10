@@ -35,6 +35,8 @@ pub struct CamPanel {
     pub tool_number: String,
     pub tool_diameter: String,
     pub tool_kind: usize,
+    /// Empty: four times the diameter.
+    pub tool_flute: String,
     // The setup form.
     pub material: usize,
     pub origin: usize,
@@ -61,6 +63,8 @@ pub struct CamPanel {
     pub show_paths: bool,
     /// `cam.toolpaths` for a design revision and setup, as lines to draw.
     paths: Option<(u64, u64, PathLines)>,
+    /// Counts the times `paths` was worked out, so the model scene draws the new lines.
+    generation: u64,
 }
 
 /// A setup's toolpaths in model coordinates: cutting runs and rapid moves.
@@ -68,6 +72,8 @@ pub struct CamPanel {
 pub struct PathLines {
     pub cuts: Vec<Vec<Vec3>>,
     pub rapids: Vec<[Vec3; 2]>,
+    /// The stock's corners (lowest, highest).
+    pub stock: Option<[Vec3; 2]>,
 }
 
 impl Default for CamPanel {
@@ -78,6 +84,7 @@ impl Default for CamPanel {
             tool_number: "1".into(),
             tool_diameter: "3.175".into(),
             tool_kind: 0,
+            tool_flute: String::new(),
             material: 0,
             origin: 0,
             flipped: false,
@@ -96,6 +103,7 @@ impl Default for CamPanel {
             notice: None,
             show_paths: true,
             paths: None,
+            generation: 0,
         }
     }
 }
@@ -147,6 +155,7 @@ impl CamPanel {
         }
         let lines = app.session.execute("cam.toolpaths", &json!({"setup": setup})).map(|v| path_lines(&v)).unwrap_or_default();
         self.paths = Some((revision, setup, lines.clone()));
+        self.generation = self.generation.wrapping_add(1);
         Some(lines)
     }
 
@@ -154,7 +163,11 @@ impl CamPanel {
         let n = self.tool_number.trim().parse::<u32>().map_err(|_| tr("cam.panel.bad_tool_number").to_string())?;
         let d = number(&self.tool_diameter).ok_or_else(|| tr("cam.panel.bad_diameter").to_string())?;
         let kind = TOOL_KINDS.get(self.tool_kind).copied().unwrap_or("flat_endmill");
-        Ok(json!({"number": n, "diameter": d, "kind": kind}))
+        let mut p = json!({"number": n, "diameter": d, "kind": kind});
+        if !self.tool_flute.trim().is_empty() {
+            p["flute_length"] = json!(number(&self.tool_flute).ok_or_else(|| tr("cam.panel.bad_flute").to_string())?);
+        }
+        Ok(p)
     }
 
     fn setup_params(&self, body: Option<String>) -> Value {
@@ -240,29 +253,218 @@ fn path_lines(v: &Value) -> PathLines {
             }
         }
     }
+    if let (Some(a), Some(b)) = (point(&v["stock"][0]), point(&v["stock"][1])) {
+        out.stock = Some([a, b]);
+    }
     out
 }
 
-/// Draw the open window's toolpaths over the model: cuts in the accent colour, rapids dashed.
+/// The twelve edges of the box between `a` and `b`.
+fn box_edges(a: Vec3, b: Vec3) -> Vec<[Vec3; 2]> {
+    let c = |i: usize| Vec3::new(if i & 1 == 0 { a.x } else { b.x }, if i & 2 == 0 { a.y } else { b.y }, if i & 4 == 0 { a.z } else { b.z });
+    let mut out = Vec::with_capacity(12);
+    for i in 0..8usize {
+        for bit in [1usize, 2, 4] {
+            if i & bit == 0 {
+                out.push([c(i), c(i | bit)]);
+            }
+        }
+    }
+    out
+}
+
+/// The lines the model scene draws with the model hiding them (the cuts and the stock's
+/// edges), while the window shows toolpaths. [`paint_toolpaths`] draws them all faintly on top,
+/// so what the model hides still shows through, dimmed.
+pub(crate) fn scene_lines(sc: &mut crate::gpu::GpuScene, app: &SolveApp) {
+    let Some((_, _, lines)) = app.machining.as_ref().filter(|d| d.show_paths).and_then(|d| d.paths.as_ref()) else { return };
+    let t = Tokens::get();
+    let up = [[0.0f32, 0.0, 1.0]; 2];
+    let cut = sc.color(crate::viewport::c4(t.accent));
+    for run in &lines.cuts {
+        for w in run.windows(2) {
+            if let [a, b] = w {
+                sc.lifted_line(a.to_f32(), b.to_f32(), cut, 1.8, up);
+            }
+        }
+    }
+    if let Some([a, b]) = lines.stock {
+        let edge = sc.color(crate::viewport::c4(t.text_dim));
+        for [p, q] in box_edges(a, b) {
+            sc.line(p.to_f32(), q.to_f32(), edge, 1.0, false);
+        }
+    }
+}
+
+/// What the model scene's lines depend on: `None` while no toolpaths are shown.
+pub(crate) fn scene_key(app: &SolveApp) -> Option<(u64, u64)> {
+    app.machining.as_ref().filter(|d| d.show_paths && d.paths.is_some()).map(|d| (d.generation, d.setup.unwrap_or(0)))
+}
+
+/// Draw the open window's toolpaths over the model: faintly, so the parts the model hides show
+/// through (the model scene draws the visible cuts solid, [`scene_lines`]), and rapids dashed.
 pub fn paint_toolpaths(app: &mut SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(mut d) = app.machining.take() else { return };
     let lines = if d.show_paths { d.lines(app) } else { None };
     app.machining = Some(d);
     let Some(lines) = lines else { return };
     let t = Tokens::get();
-    let cut = egui::Stroke::new(1.5, t.accent);
+    // Without the GPU (tests, no adapter) nothing else draws them, so draw them solid.
+    let faint = if app.viewport.gpu.is_some() { 0.3 } else { 1.0 };
+    let cut = egui::Stroke::new(1.2, t.accent.gamma_multiply(faint));
     for run in &lines.cuts {
         let pts: Vec<egui::Pos2> = run.iter().filter_map(|p| proj.to_screen(*p)).collect();
         if pts.len() == run.len() {
             painter.add(egui::Shape::line(pts, cut));
         }
     }
-    let rapid = egui::Stroke::new(1.0, t.text_dim);
+    let rapid = egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.8));
     for [a, b] in &lines.rapids {
         if let (Some(sa), Some(sb)) = (proj.to_screen(*a), proj.to_screen(*b)) {
             painter.extend(crate::ui_kit::dashed_line(&[sa, sb], painter.clip_rect(), rapid, 4.0, 3.0));
         }
     }
+}
+
+/// An operation's generated name (`contour 2`) in the interface language; others as they are.
+fn op_name(name: &str) -> String {
+    if let Some((kind, n)) = name.split_once(' ')
+        && !n.is_empty()
+        && n.chars().all(|c| c.is_ascii_digit())
+        && let Some(i) = KINDS.iter().position(|k| *k == kind)
+        && let Some(label) = KIND_LABELS.get(i)
+    {
+        return format!("{} {n}", tr_label(label));
+    }
+    name.to_string()
+}
+
+/// A setup's generated name (`Setup 1`) in the interface language; others as they are.
+fn setup_name(name: &str) -> String {
+    match name.strip_prefix("Setup ") {
+        Some(n) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => solidcraft_ui_text::format("cam.setup_name", &[("n", n)]),
+        _ => name.to_string(),
+    }
+}
+
+/// A tool's generated name (`3.175 mm 2-flute end mill`, `3 mm drill`) in the interface
+/// language; others as they are.
+fn tool_name(name: &str) -> String {
+    for (pattern, id) in [("{d} mm {f}-flute end mill", "cam.tool_name.endmill"), ("{d} mm drill", "cam.tool_name.drill")] {
+        if let Some(args) = fill(pattern, name) {
+            let args: Vec<(&str, &str)> = args.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            return solidcraft_ui_text::format(id, &args);
+        }
+    }
+    name.to_string()
+}
+
+/// Any generated name in the interface language.
+fn any_name(name: &str) -> String {
+    let op = op_name(name);
+    if op != name {
+        return op;
+    }
+    let setup = setup_name(name);
+    if setup != name { setup } else { tool_name(name) }
+}
+
+/// The machining commands' messages, as the engine words them, and their message ids. A
+/// `{…}` stands for a value; a value that is a generated name is translated too.
+const MESSAGES: &[(&str, &str)] = &[
+    ("{depth} mm deep is more than {tool}'s flute length ({flute} mm)", "cam.error.too_deep"),
+    ("the bottom must be below the top", "cam.error.bottom_below_top"),
+    ("the safe height must be above the top of the material and the retract", "cam.error.safe_height"),
+    ("too many passes: make the depth per pass larger", "cam.error.too_many_passes"),
+    ("the area to face is empty", "cam.error.face_empty"),
+    ("too many facing lines: make the stepover larger", "cam.error.too_many_facing_lines"),
+    ("too many pocket rings: make the stepover larger", "cam.error.too_many_rings"),
+    ("the pocket has no boundary", "cam.error.pocket_no_boundary"),
+    ("{tool} doesn't fit in the pocket", "cam.error.tool_too_big_pocket"),
+    ("the contour has no profile", "cam.error.no_profile"),
+    ("{tool} doesn't fit inside the profile", "cam.error.tool_too_big_profile"),
+    ("tabs need a width and a height", "cam.error.tabs_size"),
+    ("there are no holes to drill", "cam.error.no_holes"),
+    ("a hole's position is not a number", "cam.error.hole_position"),
+    ("the peck depth must be more than 0 mm", "cam.error.peck"),
+    ("a drill can only drill", "cam.error.drill_only"),
+    ("the diameter must be between 0 and 100 mm", "cam.error.diameter"),
+    ("the flute length must be more than 0 mm", "cam.error.flute_length"),
+    ("a tool needs at least one flute", "cam.error.flutes"),
+    ("there is no body `{body}`", "cam.error.no_body"),
+    ("the stock margins must be between 0 and 1000 mm", "cam.error.margins"),
+    ("there is no tool T{n} in the library", "cam.error.no_tool"),
+    ("there is no tool T{n} in the library (cam.tool adds one)", "cam.error.no_tool"),
+    ("the depth must be more than 0 mm", "cam.error.depth"),
+    ("there is nothing to face: the stock has no margin above the part", "cam.error.nothing_to_face"),
+    ("pick the pocket's floor, a face that faces up in this setup", "cam.error.pocket_floor"),
+    ("pick the holes' circular edges", "cam.error.hole_edges"),
+    ("the pick is not on a face", "cam.error.not_on_face"),
+    ("the face is not flat", "cam.error.not_flat"),
+    ("the face is not level: it must face straight up or down", "cam.error.not_level"),
+    ("the face has no boundary", "cam.error.no_boundary"),
+    ("the edge is not a circle seen from above: pick a hole's round edge", "cam.error.not_circle"),
+    ("the face has a free-form edge, which can't be machined yet: only lines and arcs", "cam.error.free_form"),
+    ("the face's boundary doesn't close", "cam.error.open_boundary"),
+    ("the model has no body to machine", "cam.error.no_body_to_machine"),
+    ("the model has several bodies: name the one to machine with `body`", "cam.error.several_bodies"),
+    ("T{n} is used by {name}: change or delete that operation first", "cam.error.tool_in_use"),
+    ("{name} has no operations to write", "cam.error.nothing_to_write"),
+    ("make a setup first (cam.setup)", "cam.panel.no_setup"),
+    ("the tool library is full", "cam.error.library_full"),
+    ("there are too many setups", "cam.error.too_many_setups"),
+    ("there are too many operations", "cam.error.too_many_operations"),
+];
+
+/// The values of `pattern`'s `{…}` holes when `text` is the pattern filled in.
+fn fill<'p>(pattern: &'p str, text: &str) -> Option<Vec<(&'p str, String)>> {
+    let mut args = Vec::new();
+    let (mut p, mut t) = (pattern, text);
+    loop {
+        match p.find('{') {
+            None => return (p == t).then_some(args),
+            Some(open) => {
+                t = t.strip_prefix(p.get(..open)?)?;
+                let rest = p.get(open + 1..)?;
+                let close = rest.find('}')?;
+                let name = rest.get(..close)?;
+                p = rest.get(close + 1..)?;
+                // The value runs to the next literal piece (or the end).
+                let next = p.find('{').map_or(p, |i| p.get(..i).unwrap_or(p));
+                let end = if next.is_empty() { t.len() } else { t.find(next)? };
+                let value = t.get(..end)?;
+                // A value never holds `: `: that separates a name from its message.
+                if value.is_empty() || value.contains(": ") {
+                    return None;
+                }
+                args.push((name, value.to_string()));
+                t = t.get(end..)?;
+            }
+        }
+    }
+}
+
+/// A machining message from the engine in the interface language: the command's
+/// `invalid parameters for …:` dropped, names translated, known wordings translated; anything
+/// else as it came.
+fn cam_text(error: &str) -> String {
+    let text = error.strip_prefix("invalid parameters for `").and_then(|rest| rest.split_once("`: ")).map_or(error, |(_, text)| text);
+    translate(text)
+}
+
+fn translate(text: &str) -> String {
+    for (pattern, id) in MESSAGES {
+        if let Some(args) = fill(pattern, text) {
+            let values: Vec<(&str, String)> = args.iter().map(|(k, v)| (*k, any_name(v))).collect();
+            let values: Vec<(&str, &str)> = values.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            return solidcraft_ui_text::format(id, &values);
+        }
+    }
+    // `name: message`: the name of the operation, setup or tool the message is about.
+    if let Some((name, rest)) = text.split_once(": ") {
+        return format!("{}: {}", any_name(name), translate(rest));
+    }
+    crate::i18n::tr_engine_error(text)
 }
 
 /// Open the window.
@@ -329,7 +531,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 for tool in &tools {
                     let n = tool["number"].as_u64().unwrap_or(0);
                     ui.label(format!("T{n}"));
-                    ui.label(format!("{} ({} mm)", text(&tool["name"]), text(&tool["diameter"])));
+                    ui.label(format!("{} · {} {} mm", tool_name(&text(&tool["name"])), tr_label("Flute length"), text(&tool["flute_length"])));
                     if crate::ui_kit::button(ui, format!("{} T{n}", tr_label("Delete")), crate::ui_kit::Button::Small).clicked() {
                         action = Some(Action::DeleteTool(u32::try_from(n).unwrap_or(0)));
                     }
@@ -339,6 +541,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             ui.horizontal_wrapped(|ui| {
                 field(ui, "Number", &mut d.tool_number, 48.0);
                 field(ui, "Diameter", &mut d.tool_diameter, 64.0);
+                field(ui, "Flute length", &mut d.tool_flute, 56.0);
                 crate::ui_kit::row(ui, "Type", |ui| crate::ui_kit::dropdown(ui, "cam_tool_kind", &mut d.tool_kind, &TOOL_KIND_LABELS));
                 if crate::ui_kit::button(ui, "Add Tool", crate::ui_kit::Button::Normal).clicked() {
                     action = Some(Action::AddTool);
@@ -355,7 +558,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 let id = s["id"].as_u64().unwrap_or(0);
                 let stock: Vec<String> = s["stock"].as_array().into_iter().flatten().map(|v| format!("{:.1}", v.as_f64().unwrap_or(0.0))).collect();
                 ui.horizontal(|ui| {
-                    let label = format!("{} — {} · {} · {} mm", text(&s["name"]), text(&s["body"]), text(&s["material"]), stock.join(" × "));
+                    let material = MATERIALS
+                        .iter()
+                        .position(|m| *m == text(&s["material"]))
+                        .and_then(|i| MATERIAL_LABELS.get(i))
+                        .map_or(String::new(), |l| tr_label(l).to_string());
+                    let label = format!("{} — {} · {} · {} mm", setup_name(&text(&s["name"])), text(&s["body"]), material, stock.join(" × "));
                     if crate::ui_kit::list_picker(ui, &format!("cam_setup_{id}"), &label, d.setup == Some(id)).clicked() {
                         d.setup = Some(id);
                     }
@@ -364,7 +572,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     }
                 });
                 if let Some(e) = s["error"].as_str() {
-                    ui.label(RichText::new(e).color(t.error));
+                    ui.label(RichText::new(cam_text(e)).color(t.error));
                 }
             }
             ui.horizontal_wrapped(|ui| {
@@ -393,10 +601,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         let id = op["id"].as_u64().unwrap_or(0);
                         let minutes = op["minutes"].as_f64().unwrap_or(0.0);
                         total += minutes;
-                        ui.label(text(&op["name"]));
+                        ui.label(op_name(&text(&op["name"])));
                         ui.label(format!("T{}", text(&op["tool"])));
                         match op["error"].as_str() {
-                            Some(e) => ui.label(RichText::new(e).color(t.error)),
+                            Some(e) => ui.label(RichText::new(cam_text(e)).color(t.error)),
                             None => ui.label(RichText::new(format!("{minutes:.1} {}", tr_label("min"))).color(t.text_dim)),
                         };
                         if crate::ui_kit::button(ui, format!("{} #{id}", tr_label("Delete")), crate::ui_kit::Button::Small).clicked() {
@@ -410,7 +618,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 }
             }
             if picked.is_some() && !tools.is_empty() {
-                let tool_labels: Vec<String> = tools.iter().map(|tool| format!("T{} {}", text(&tool["number"]), text(&tool["name"]))).collect();
+                let tool_labels: Vec<String> =
+                    tools.iter().map(|tool| format!("T{} {}", text(&tool["number"]), tool_name(&text(&tool["name"])))).collect();
                 let tool_refs: Vec<&str> = tool_labels.iter().map(String::as_str).collect();
                 if d.tool >= tool_refs.len() {
                     d.tool = 0;
@@ -451,7 +660,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui.label(RichText::new(tr("cam.panel.add_a_tool")).color(t.text_dim));
             }
             if let Some(e) = &d.error {
-                ui.label(RichText::new(e).color(t.error));
+                ui.label(RichText::new(cam_text(e)).color(t.error));
             }
             if let Some(n) = &d.notice {
                 ui.label(RichText::new(n).color(t.text_dim));
@@ -522,6 +731,8 @@ fn run(app: &mut SolveApp, d: &mut CamPanel, action: Action, tools: &[Value], se
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    use super::{MESSAGES, cam_text, fill};
     use solidcraft_engine::Sel;
 
     use crate::scenario::Harness;
@@ -562,6 +773,71 @@ mod tests {
         d.show_paths = false;
         h.app.machining = Some(d);
         h.frames(2);
+    }
+
+    #[test]
+    fn engine_messages_are_read_back_into_their_ids_and_translated() {
+        crate::i18n::install();
+        assert_eq!(fill("{d} mm drill", "3.5 mm drill"), Some(vec![("d", "3.5".to_string())]));
+        assert_eq!(fill("{d} mm drill", "3.5 mm drill bit"), None);
+        assert_eq!(fill("T{n} is used by {name}: x", "T2 is used by contour 1: x").map(|a| a.len()), Some(2));
+        // In English every known wording comes back as it was.
+        for (pattern, id) in MESSAGES {
+            if !id.starts_with("cam.error.") || pattern.ends_with("(cam.tool adds one)") {
+                continue;
+            }
+            let text = pattern.replace("{depth}", "15.50").replace("{flute}", "12.70").replace("{tool}", "T9").replace("{body}", "Body1");
+            let text = text.replace("{n}", "3").replace("{name}", "Setup 9");
+            let back = cam_text(&format!("invalid parameters for `cam.operation`: {text}"));
+            assert_eq!(back.to_lowercase(), text.to_lowercase(), "{id}");
+            // Every wording is translated.
+            assert_ne!(solidcraft_ui_text::Locale::for_language("ja").text(id), *id, "{id}");
+        }
+        // Names and the message after them.
+        let e = "invalid parameters for `cam.operation`: contour 1: 15.50 mm deep is more than 3.175 mm 2-flute end mill's flute length (12.70 mm)";
+        assert_eq!(cam_text(e), "Contour 1: 15.50 mm deep is more than 3.175 mm 2-flute end mill's flute length (12.70 mm)");
+        assert_eq!(cam_text("something new"), "something new", "an unknown message stays as it came");
+        let ja = solidcraft_ui_text::Locale::for_language("ja");
+        assert!(ja.format("cam.error.too_deep", &[("depth", "15.50"), ("tool", "T1"), ("flute", "12.70")]).contains("12.70"));
+    }
+
+    #[test]
+    fn a_tool_s_flute_length_is_kept_and_a_deeper_cut_needs_it() {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length": 60, "width": 40, "height": 14})).unwrap();
+        crate::cam_panel::open(&mut h.app);
+        h.app.machining.as_mut().unwrap().tool_flute = "20".into();
+        h.frames(2);
+        h.step(&json!({"widget": "Add Tool"})).unwrap();
+        let tools = h.app.session.execute("cam.generate", &json!({})).unwrap();
+        assert_eq!(tools["tools"][0]["flute_length"], json!(20.0), "{tools}");
+        h.app.machining.as_mut().unwrap().tool_flute = "deep".into();
+        h.frames(2);
+        h.step(&json!({"widget": "Add Tool"})).unwrap();
+        assert!(h.app.machining.as_ref().unwrap().error.is_some(), "a flute length that is not a number is refused");
+    }
+
+    #[test]
+    fn the_stock_and_cuts_go_into_the_model_scene_while_toolpaths_are_shown() {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length": 60, "width": 40, "height": 8})).unwrap();
+        h.app.run("cam.tool", json!({"number": 1, "diameter": 3.175})).unwrap();
+        h.app.run("cam.setup", json!({})).unwrap();
+        h.app.run("cam.operation", json!({"type": "face", "tool": 1})).unwrap();
+        crate::cam_panel::open(&mut h.app);
+        assert_eq!(super::scene_key(&h.app), None, "nothing worked out yet");
+        h.frames(3);
+        let mut d = h.app.machining.take().unwrap();
+        let lines = d.lines(&mut h.app).unwrap();
+        h.app.machining = Some(d);
+        assert!(lines.stock.is_some());
+        assert!(super::scene_key(&h.app).is_some());
+        let mut sc = crate::gpu::GpuScene::default();
+        super::scene_lines(&mut sc, &h.app);
+        assert!(!sc.lines.is_empty());
+        h.app.machining.as_mut().unwrap().show_paths = false;
+        assert_eq!(super::scene_key(&h.app), None);
+        assert_eq!(super::box_edges(solidcore_record::Vec3::new(0.0, 0.0, 0.0), solidcore_record::Vec3::new(1.0, 2.0, 3.0)).len(), 12);
     }
 
     #[test]

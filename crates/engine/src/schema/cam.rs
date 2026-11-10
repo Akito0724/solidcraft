@@ -325,6 +325,8 @@ pub struct CamPathLines {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct CamToolpaths {
     pub setup: u64,
+    /// The stock's lowest and highest corners (model coordinates, mm).
+    pub stock: [[f64; 3]; 2],
     pub paths: Vec<CamPathLines>,
     /// True when the points were cut short (very long toolpaths).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

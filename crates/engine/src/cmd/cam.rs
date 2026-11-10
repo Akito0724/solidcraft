@@ -72,7 +72,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&TOOLPATHS_CONTRACT)
         .output(output_schema_for::<CamToolpaths>)
-        .params("setup? (default the only one), step? (mm, default 1) → setup, paths [{operation, name, tool, cuts [[[x,y,z]…]…], rapids [[from, to]…], error?}], truncated?; model coordinates"),
+        .params("setup? (default the only one), step? (mm, default 1) → setup, stock [min, max], paths [{operation, name, tool, cuts [[[x,y,z]…]…], rapids [[from, to]…], error?}], truncated?; model coordinates"),
 ];
 
 /// Most points `cam.toolpaths` returns.
@@ -545,7 +545,10 @@ fn toolpaths_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let setup = which_setup(s, cmd, q.setup)?;
     let s: &Session = s;
-    let frame = s.doc.cam_plan(&s.model.state(), setup).map_err(|e| bad(cmd, e.to_string()))?.frame;
+    let plan = s.doc.cam_plan(&s.model.state(), setup).map_err(|e| bad(cmd, e.to_string()))?;
+    let frame = plan.frame;
+    let corners = [frame.to_model(plan.stock_min), frame.to_model(plan.stock_max)];
+    let stock = [[0, 1, 2].map(|i| round(corners[0][i].min(corners[1][i]), 4)), [0, 1, 2].map(|i| round(corners[0][i].max(corners[1][i]), 4))];
     let list = setup_paths(s, setup).map_err(|e| bad(cmd, e))?;
     let model = |p: solidcraft_cam::P3| frame.to_model([p.x, p.y, p.z]).map(|v| round(v, 4));
     let mut budget = MAX_POINTS;
@@ -590,7 +593,7 @@ fn toolpaths_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         }
         paths.push(lines);
     }
-    reply(cmd, CamToolpaths { setup, paths, truncated, param_warnings: Vec::new() })
+    reply(cmd, CamToolpaths { setup, stock, paths, truncated, param_warnings: Vec::new() })
 }
 
 /// An operation's error, with its name in front unless the toolpath's own message already has it.
@@ -672,6 +675,8 @@ mod tests {
         }
         let low = cuts.iter().map(|p| p[2]).fold(f64::MAX, f64::min);
         assert!((low + 0.5).abs() < 1e-6, "{low}");
+        // The stock: 3 mm around the block, 1 mm above it.
+        assert_eq!(shown["stock"], json!([[-3.0, -3.0, 0.0], [63.0, 43.0, 11.0]]));
         // Turned over, the cut ends past the stock's far side, now above it (1 mm of stock on top).
         let id = setup["id"].as_u64().unwrap();
         s.execute("cam.setup", &json!({"id": id, "flipped": true})).unwrap();

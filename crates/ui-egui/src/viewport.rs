@@ -573,6 +573,8 @@ fn base_scene_key(app: &SolveApp) -> u64 {
     app.preview.effective_replaced().hash(&mut h);
     app.preview.rolled_back.hash(&mut h);
     app.preferences.cosmetic_threads.hash(&mut h);
+    // The Machining window's toolpaths and stock, drawn with the model hiding them.
+    crate::cam_panel::scene_key(app).hash(&mut h);
     app.preferences.section_hatch.hash(&mut h);
     solidcraft_theme::is_dark().hash(&mut h);
     solidcraft_theme::vision().hash(&mut h);
@@ -1506,6 +1508,7 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
     section_outlines(&mut sc, app, &st);
     continuity_seams(&mut sc, app);
     isocurves(&mut sc, app);
+    crate::cam_panel::scene_lines(&mut sc, app);
     crate::edit_in_place::draw_context(app, &mut sc);
     sc
 }
