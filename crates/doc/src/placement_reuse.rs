@@ -143,6 +143,7 @@ fn same_geometry_inputs(a: &Document, b: &Document) -> bool {
         plastic,
         parts,
         links,
+        cam: _,
         configs,
         favorites,
         canvases,

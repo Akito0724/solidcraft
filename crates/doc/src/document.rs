@@ -3210,6 +3210,9 @@ pub struct Document {
     /// Components linked to another design file (by component id).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub links: std::collections::BTreeMap<u64, DesignLink>,
+    /// Machining: the tool library, setups and operations ([`crate::cam`]).
+    #[serde(default, skip_serializing_if = "crate::cam::CamData::is_empty")]
+    pub cam: crate::cam::CamData,
     /// Configurations (rows of parameter values and suppressions).
     #[serde(default, skip_serializing_if = "crate::config::ConfigTable::is_empty")]
     pub configs: crate::config::ConfigTable,
@@ -3538,6 +3541,7 @@ impl Document {
             configs: Default::default(),
             parts: Default::default(),
             links: Default::default(),
+            cam: Default::default(),
             body_components: Default::default(),
             body_offsets: Default::default(),
             materials: Default::default(),
