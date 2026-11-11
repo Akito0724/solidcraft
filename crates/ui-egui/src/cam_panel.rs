@@ -837,7 +837,11 @@ pub fn browser_tree(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     for s in &setups {
         let id = s["id"].as_u64().unwrap_or(0);
-        let material = MATERIALS.iter().position(|m| *m == text(&s["material"])).and_then(|i| MATERIAL_LABELS.get(i)).map_or("", |l| tr_label(l));
+        let material = MATERIALS
+            .iter()
+            .position(|m| *m == text(&s["material"]))
+            .and_then(|i| MATERIAL_LABELS.get(i))
+            .map_or(String::new(), |l| tr_label(l).to_string());
         let stock: Vec<String> = s["stock"].as_array().into_iter().flatten().map(|v| format!("{:.0}", v.as_f64().unwrap_or(0.0))).collect();
         let secondary = format!("{material} · {}", stock.join("×"));
         let name = setup_name(&text(&s["name"]));
