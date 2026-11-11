@@ -101,7 +101,9 @@
     "help.cam.export": "يكتب G-code للإعداد لـ GRBL، ملفًا لكل أداة. استخدمه عندما تبدو المسارات صحيحة، ثم افتح الملفات في برنامج تحكم الآلة.",
     "ui.heading_manufacture": "التصنيع",
     "ui.tab_manufacture": "التصنيع",
-    "ui.heading_2d_milling": "تفريز ثنائي الأبعاد"
+    "ui.heading_2d_milling": "تفريز ثنائي الأبعاد",
+    "cam.panel.finish_first": "أنهِ الرسم أو الأمر الحالي قبل الدخول إلى التصنيع.",
+    "ui.workspace_manufacture_tabs": "الإعداد · تفريز ثنائي الأبعاد · فحص · إخراج"
   },
   "en": {
     "Machining": "Machining",
@@ -205,7 +207,9 @@
     "help.cam.export": "Writes the setup's G-code for GRBL, one file per tool. Use it when the toolpaths look right, then open the files in your machine's control software.",
     "ui.heading_manufacture": "MANUFACTURE",
     "ui.tab_manufacture": "Manufacture",
-    "ui.heading_2d_milling": "2D MILLING"
+    "ui.heading_2d_milling": "2D MILLING",
+    "cam.panel.finish_first": "Finish the current sketch or command before entering Manufacture.",
+    "ui.workspace_manufacture_tabs": "Setup · 2D Milling · Check · Output"
   },
   "he": {
     "Machining": "עיבוד",
@@ -309,7 +313,9 @@
     "help.cam.export": "כותב את ה־G-code של ההגדרה ל־GRBL, קובץ לכל כלי. השתמשו בו כשמסלולי הכלי נראים נכון, ואז פתחו את הקבצים בתוכנת הבקרה של המכונה.",
     "ui.heading_manufacture": "ייצור",
     "ui.tab_manufacture": "ייצור",
-    "ui.heading_2d_milling": "כרסום דו־ממדי"
+    "ui.heading_2d_milling": "כרסום דו־ממדי",
+    "cam.panel.finish_first": "סיימו את הסקיצה או הפקודה הנוכחית לפני המעבר לייצור.",
+    "ui.workspace_manufacture_tabs": "הגדרה · כרסום דו־ממדי · בדיקה · פלט"
   },
   "ja": {
     "Machining": "加工",
@@ -413,7 +419,9 @@
     "help.cam.export": "セットアップのG-code（GRBL用）を工具ごとに1ファイルずつ書き出します。ツールパスを確認したら書き出して、制御ソフトで開いてください。",
     "ui.heading_manufacture": "製造",
     "ui.tab_manufacture": "製造",
-    "ui.heading_2d_milling": "2D加工"
+    "ui.heading_2d_milling": "2D加工",
+    "cam.panel.finish_first": "製造に切り替える前に、編集中のスケッチやコマンドを終了してください。",
+    "ui.workspace_manufacture_tabs": "セットアップ · 2D加工 · 確認 · 出力"
   },
   "vi": {
     "Machining": "Gia công",
@@ -517,7 +525,9 @@
     "help.cam.export": "Ghi G-code của thiết lập cho GRBL, mỗi dao một tệp. Dùng khi đường chạy dao đã ổn, rồi mở tệp trong phần mềm điều khiển máy.",
     "ui.heading_manufacture": "SẢN XUẤT",
     "ui.tab_manufacture": "Sản xuất",
-    "ui.heading_2d_milling": "PHAY 2D"
+    "ui.heading_2d_milling": "PHAY 2D",
+    "cam.panel.finish_first": "Hãy hoàn tất bản phác thảo hoặc lệnh hiện tại trước khi vào Sản xuất.",
+    "ui.workspace_manufacture_tabs": "Thiết lập · Phay 2D · Kiểm tra · Xuất"
   },
   "zh": {
     "Machining": "加工",
@@ -621,6 +631,8 @@
     "help.cam.export": "为 GRBL 写出设置的 G 代码，每把刀一个文件。确认刀具路径后导出，再在机床控制软件中打开。",
     "ui.heading_manufacture": "制造",
     "ui.tab_manufacture": "制造",
-    "ui.heading_2d_milling": "2D 铣削"
+    "ui.heading_2d_milling": "2D 铣削",
+    "cam.panel.finish_first": "进入制造前，请先完成当前的草图或命令。",
+    "ui.workspace_manufacture_tabs": "设置 · 2D 铣削 · 检查 · 输出"
   }
 }

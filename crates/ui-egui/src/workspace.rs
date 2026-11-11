@@ -630,11 +630,8 @@ pub struct SpecialtyTab {
     pub icon: &'static str,
 }
 
-pub const SPECIALTY_TABS: &[SpecialtyTab] = &[
-    SpecialtyTab { tab: "SHEET METAL", icon: "sheet" },
-    SpecialtyTab { tab: "WELDMENTS", icon: "frame_member" },
-    SpecialtyTab { tab: "MANUFACTURE", icon: "cut" },
-];
+pub const SPECIALTY_TABS: &[SpecialtyTab] =
+    &[SpecialtyTab { tab: "SHEET METAL", icon: "sheet" }, SpecialtyTab { tab: "WELDMENTS", icon: "frame_member" }];
 
 /// A tab's row in the toolbar menu: the icon of the command that leads the tab (Model › Create ›
 /// Extrude, Inspect › Measure, View › Views and so on).
@@ -678,6 +675,10 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
     if crate::render_workspace::active(app) {
         return Vec::new();
     }
+    // The Manufacture workspace has a ribbon of its own.
+    if crate::cam_panel::workspace_active(app) {
+        return vec!["MANUFACTURE"];
+    }
     let mut tabs: Vec<_> = TABS.iter().copied().filter(|tab| tab_turned_on(app, tab)).collect();
     if app.preferences.sketch_tab_always {
         // Right after MODEL, whether a sketch is open or not (#7904).
@@ -713,6 +714,10 @@ pub fn starts_a_sketch(app: &crate::SolveApp, id: &str) -> bool {
 /// metal, and sheet metal over weldments.
 pub fn sync_context(app: &mut crate::SolveApp) {
     if crate::render_workspace::active(app) {
+        return;
+    }
+    if crate::cam_panel::workspace_active(app) {
+        app.ui.tab = "MANUFACTURE".into();
         return;
     }
     let context = app
@@ -970,7 +975,7 @@ mod tests {
     fn contextual_tabs_follow_the_active_body_and_allow_other_tabs() {
         let mut h = crate::scenario::Harness::new();
         let mut fresh = TABS.to_vec();
-        fresh.extend(["SHEET METAL", "WELDMENTS", "MANUFACTURE"]);
+        fresh.extend(["SHEET METAL", "WELDMENTS"]);
         assert_eq!(visible_tabs(&h.app), fresh, "SHEET METAL and WELDMENTS are reachable before any sheet body or member exists");
         h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
         assert_eq!(h.app.ui.tab, "SKETCH");

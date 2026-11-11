@@ -1710,7 +1710,8 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
             crate::ui_kit::StageBar::workspace(ui, ws, "ws_render", app.tr("ui.render"), app.tr("ui.ribbon_workspace"));
         } else if folded {
             // Folded to the tab row: the workspace's name and its arrow, on one line.
-            let galley = egui::WidgetText::from(egui::RichText::new(app.tr("ui.design")).size(t.font_button).color(t.text)).into_galley(
+            let name = app.tr(if crate::cam_panel::workspace_active(app) { "ui.manufacture" } else { "ui.design" });
+            let galley = egui::WidgetText::from(egui::RichText::new(name).size(t.font_button).color(t.text)).into_galley(
                 ui,
                 Some(egui::TextWrapMode::Truncate),
                 (ws.width() - 2.0 * t.space_8 - t.space_12).max(0.0),
@@ -1720,7 +1721,14 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
             ribbon_galley(ui, pos2(ws.center().x - 6.0, ws.center().y + 1.0), galley, t.text);
             dropdown_arrow(&painter, pos2(ws.center().x - 6.0 + label_width / 2.0 + 7.0, ws.center().y + 1.5), t.text_dim);
         } else {
-            let workspace_icon = if render { "ws_render" } else { "ws_design" };
+            let manufacture = crate::cam_panel::workspace_active(app);
+            let workspace_icon = if render {
+                "ws_render"
+            } else if manufacture {
+                "cut"
+            } else {
+                "ws_design"
+            };
             icons::paint_icon(
                 &painter,
                 Rect::from_center_size(pos2(ws.center().x, ws.top() + if labels { 39.0 } else { 25.0 }), vec2(30.0, 30.0)),
@@ -1730,7 +1738,13 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
             ribbon_text(
                 ui,
                 pos2(ws.center().x, ws.top() + if labels { 69.0 } else { 50.0 }),
-                app.tr(if render { "ui.render" } else { "ui.design" }),
+                app.tr(if render {
+                    "ui.render"
+                } else if manufacture {
+                    "ui.manufacture"
+                } else {
+                    "ui.design"
+                }),
                 t.font_button,
                 t.text,
                 true,

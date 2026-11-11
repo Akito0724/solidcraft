@@ -368,6 +368,10 @@ pub struct UiState {
     /// Last contextual body/sketch, only used to select on entry.
     #[serde(skip)]
     pub ribbon_context: Option<String>,
+    /// The Manufacture workspace is open: the ribbon shows only its MANUFACTURE tab
+    /// (`cam_panel::enter_workspace`). Not saved: the app opens in Design.
+    #[serde(skip)]
+    pub manufacture: bool,
     pub show_browser: bool,
     pub show_timeline: bool,
     pub show_grid: bool,
@@ -426,6 +430,7 @@ impl Default for UiState {
             layout: Default::default(),
             tab: "MODEL".into(),
             ribbon_context: None,
+            manufacture: false,
             sketch_return_tab: None,
             ribbon_open: false,
             show_browser: true,

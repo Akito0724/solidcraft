@@ -467,6 +467,56 @@ fn translate(text: &str) -> String {
     crate::i18n::tr_engine_error(text)
 }
 
+/// The Manufacture workspace is open (and Render is not).
+pub fn workspace_active(app: &SolveApp) -> bool {
+    app.ui.manufacture && !crate::render_workspace::active(app)
+}
+
+/// Switch to the `design`, `render` or `manufacture` workspace. Manufacture shows only its own
+/// ribbon tab and opens the Machining window; leaving it closes the window.
+pub fn switch_workspace(app: &mut SolveApp, workspace: &str) -> Result<(), String> {
+    match workspace {
+        "manufacture" => {
+            if workspace_active(app) {
+                open(app);
+                return Ok(());
+            }
+            if app.session.active_sketch.is_some() || app.tool.is_some() || app.dialog.is_some() || app.file_load.busy() {
+                return Err(tr("cam.panel.finish_first").to_string());
+            }
+            if crate::render_workspace::active(app) {
+                crate::render_workspace::enter(app, false)?;
+            }
+            app.ui.manufacture = true;
+            app.ui.tab = "MANUFACTURE".into();
+            app.ui.ribbon_open = false;
+            open(app);
+            Ok(())
+        }
+        "render" | "design" => {
+            let leaving = app.ui.manufacture;
+            app.ui.manufacture = false;
+            if workspace == "render" {
+                if let Err(e) = crate::render_workspace::enter(app, true) {
+                    app.ui.manufacture = leaving;
+                    return Err(e);
+                }
+            } else {
+                crate::render_workspace::enter(app, false)?;
+            }
+            if leaving {
+                app.machining = None;
+                if app.ui.tab == "MANUFACTURE" {
+                    app.ui.tab = "MODEL".into();
+                }
+                crate::workspace::sync_context(app);
+            }
+            Ok(())
+        }
+        other => Err(format!("there is no workspace `{other}`")),
+    }
+}
+
 /// The Manufacture tab's buttons (`ui.start` of a machining command): open the window ready for
 /// what the button names. `false` for any other command.
 pub fn start(app: &mut SolveApp, id: &str) -> bool {
@@ -887,9 +937,37 @@ mod tests {
         h.step(&json!({"start": "cam.toolpaths"})).unwrap();
         assert!(h.app.machining.as_ref().unwrap().show_paths);
         assert!(!super::start(&mut h.app, "solid.box"));
-        let tabs = crate::workspace::visible_tabs(&h.app);
-        assert!(tabs.contains(&"MANUFACTURE"), "{tabs:?}");
+        assert!(!crate::workspace::visible_tabs(&h.app).contains(&"MANUFACTURE"), "Design has no Manufacture tab");
         assert_eq!(crate::workspace::tab_name("MANUFACTURE"), "Manufacture");
+    }
+
+    #[test]
+    fn the_manufacture_workspace_has_its_own_ribbon_and_design_gets_its_tabs_back() {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length": 60, "width": 40, "height": 8})).unwrap();
+        h.app.ui.tab = "INSPECT".into();
+        super::switch_workspace(&mut h.app, "manufacture").unwrap();
+        h.frames(2);
+        assert!(super::workspace_active(&h.app));
+        assert_eq!(crate::workspace::visible_tabs(&h.app), ["MANUFACTURE"]);
+        assert_eq!(h.app.ui.tab, "MANUFACTURE");
+        assert!(h.app.machining.is_some(), "entering opens the Machining window");
+        // Selecting things in the model keeps the Manufacture ribbon.
+        crate::workspace::sync_context(&mut h.app);
+        assert_eq!(h.app.ui.tab, "MANUFACTURE");
+        // The control channel reports and switches it too.
+        assert_eq!(h.call("ui.workspace", json!({}))["result"]["workspace"], "manufacture");
+        super::switch_workspace(&mut h.app, "design").unwrap();
+        h.frames(2);
+        assert!(!super::workspace_active(&h.app));
+        assert!(h.app.machining.is_none(), "leaving closes the window");
+        assert!(crate::workspace::visible_tabs(&h.app).contains(&"MODEL"));
+        assert_ne!(h.app.ui.tab, "MANUFACTURE");
+        assert!(super::switch_workspace(&mut h.app, "drawing").is_err());
+        // A sketch being edited has to be finished first.
+        h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        assert!(super::switch_workspace(&mut h.app, "manufacture").is_err());
+        assert!(!super::workspace_active(&h.app));
     }
 
     #[test]
