@@ -691,77 +691,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut action = None;
     let closed = crate::ui_kit::Window::new(egui::Id::unique("sc_cam"), "update", tr_label("Machining")).cards(3.0).show_body(ctx, |ui| {
         {
-            // Tools.
-            heading(ui, "Tools");
-            if tools.is_empty() {
-                ui.label(RichText::new(tr_label("No tools yet")).color(t.text_dim));
-            }
-            egui::Grid::new("sc_cam_tools").num_columns(3).striped(true).spacing([12.0, 4.0]).show(ui, |ui| {
-                for tool in &tools {
-                    let n = tool["number"].as_u64().unwrap_or(0);
-                    ui.label(format!("T{n}"));
-                    ui.label(format!("{} · {} {} mm", tool_name(&text(&tool["name"])), tr_label("Flute length"), text(&tool["flute_length"])));
-                    if crate::ui_kit::button(ui, format!("{} T{n}", tr_label("Delete")), crate::ui_kit::Button::Small).clicked() {
-                        action = Some(Action::DeleteTool(u32::try_from(n).unwrap_or(0)));
-                    }
-                    ui.end_row();
+            // What is used most comes first: export, the operations and their form; the setups
+            // and tools fold away once they have something in them.
+            ui.horizontal(|ui| {
+                if crate::ui_kit::button(ui, "Export G-code…", crate::ui_kit::Button::Normal).clicked() {
+                    action = Some(Action::Export);
                 }
+                crate::ui_kit::checkbox(ui, tr_label("Show toolpaths"), &mut d.show_paths);
             });
-            ui.horizontal_wrapped(|ui| {
-                field(ui, "Number", &mut d.tool_number, 48.0);
-                field(ui, "Diameter", &mut d.tool_diameter, 64.0);
-                field(ui, "Flute length", &mut d.tool_flute, 56.0);
-                crate::ui_kit::row(ui, "Type", |ui| crate::ui_kit::dropdown(ui, "cam_tool_kind", &mut d.tool_kind, &TOOL_KIND_LABELS));
-                if crate::ui_kit::button(ui, "Add Tool", crate::ui_kit::Button::Normal).clicked() {
-                    action = Some(Action::AddTool);
-                }
-            });
-            ui.separator();
-
-            // Setups.
-            heading(ui, "Setups");
-            if setups.is_empty() {
-                ui.label(RichText::new(tr_label("No setups yet")).color(t.text_dim));
-            }
-            for s in &setups {
-                let id = s["id"].as_u64().unwrap_or(0);
-                let stock: Vec<String> = s["stock"].as_array().into_iter().flatten().map(|v| format!("{:.1}", v.as_f64().unwrap_or(0.0))).collect();
-                ui.horizontal(|ui| {
-                    let material = MATERIALS
-                        .iter()
-                        .position(|m| *m == text(&s["material"]))
-                        .and_then(|i| MATERIAL_LABELS.get(i))
-                        .map_or(String::new(), |l| tr_label(l).to_string());
-                    let label = format!("{} — {} · {} · {} mm", setup_name(&text(&s["name"])), text(&s["body"]), material, stock.join(" × "));
-                    if crate::ui_kit::list_picker(ui, &format!("cam_setup_{id}"), &label, d.setup == Some(id)).clicked() {
-                        d.setup = Some(id);
-                    }
-                    if crate::ui_kit::button(ui, tr_label("Delete"), crate::ui_kit::Button::Small).clicked() {
-                        action = Some(Action::Delete(id));
-                    }
-                });
-                if let Some(e) = s["error"].as_str() {
-                    ui.label(RichText::new(cam_text(e)).color(t.error));
-                }
-            }
-            ui.horizontal_wrapped(|ui| {
-                crate::ui_kit::row(ui, "Material", |ui| crate::ui_kit::dropdown(ui, "cam_material", &mut d.material, &MATERIAL_LABELS));
-                crate::ui_kit::row(ui, "Origin", |ui| crate::ui_kit::dropdown(ui, "cam_origin", &mut d.origin, &ORIGIN_LABELS));
-                crate::ui_kit::checkbox(ui, tr_label("Turn over"), &mut d.flipped);
-            });
-            ui.horizontal_wrapped(|ui| {
-                field(ui, "Side margin", &mut d.margin_side, 48.0);
-                field(ui, "Top margin", &mut d.margin_top, 48.0);
-                field(ui, "Bottom margin", &mut d.margin_bottom, 48.0);
-                if crate::ui_kit::button(ui, "New Setup", crate::ui_kit::Button::Normal).clicked() {
-                    action = Some(Action::NewSetup);
-                }
-            });
-            ui.separator();
-
             // Operations of the picked setup.
             heading(ui, "Operations");
-            crate::ui_kit::checkbox(ui, tr_label("Show toolpaths"), &mut d.show_paths);
             let picked = setups.iter().find(|s| s["id"].as_u64() == d.setup);
             let mut total = 0.0;
             if let Some(s) = picked {
@@ -825,18 +764,20 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.horizontal_wrapped(|ui| field(ui, "Peck", &mut d.peck, 48.0));
                 }
                 // Cutting data: empty fields take the material's starting values.
-                ui.horizontal_wrapped(|ui| {
-                    field(ui, "Spindle (rpm)", &mut d.rpm, 64.0);
-                    field(ui, "Feed (mm/min)", &mut d.feed, 56.0);
-                    field(ui, "Plunge (mm/min)", &mut d.plunge, 56.0);
+                crate::ui_kit::section(ui, "cam_cutting", "Cutting data", true, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        field(ui, "Spindle (rpm)", &mut d.rpm, 64.0);
+                        field(ui, "Feed (mm/min)", &mut d.feed, 56.0);
+                        field(ui, "Plunge (mm/min)", &mut d.plunge, 56.0);
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        field(ui, "Depth per pass", &mut d.stepdown, 48.0);
+                        if kind != "drill" {
+                            field(ui, "Stepover (%)", &mut d.stepover, 48.0);
+                        }
+                    });
+                    ui.label(RichText::new(tr("cam.panel.cutting_hint")).small().color(t.text_dim));
                 });
-                ui.horizontal_wrapped(|ui| {
-                    field(ui, "Depth per pass", &mut d.stepdown, 48.0);
-                    if kind != "drill" {
-                        field(ui, "Stepover (%)", &mut d.stepover, 48.0);
-                    }
-                });
-                ui.label(RichText::new(tr("cam.panel.cutting_hint")).small().color(t.text_dim));
                 let hint = match kind {
                     "pocket" => tr("cam.panel.pick_floor"),
                     "contour" => tr("cam.panel.pick_face"),
@@ -873,9 +814,73 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui.label(RichText::new(n).color(t.text_dim));
             }
             ui.separator();
-            if crate::ui_kit::button(ui, "Export G-code…", crate::ui_kit::Button::Normal).clicked() {
-                action = Some(Action::Export);
-            }
+            crate::ui_kit::section_count(ui, "cam_setups", "Setups", setups.is_empty(), Some(setups.len()), |ui| {
+                // Setups.
+                if setups.is_empty() {
+                    ui.label(RichText::new(tr_label("No setups yet")).color(t.text_dim));
+                }
+                for s in &setups {
+                    let id = s["id"].as_u64().unwrap_or(0);
+                    let stock: Vec<String> =
+                        s["stock"].as_array().into_iter().flatten().map(|v| format!("{:.1}", v.as_f64().unwrap_or(0.0))).collect();
+                    ui.horizontal(|ui| {
+                        let material = MATERIALS
+                            .iter()
+                            .position(|m| *m == text(&s["material"]))
+                            .and_then(|i| MATERIAL_LABELS.get(i))
+                            .map_or(String::new(), |l| tr_label(l).to_string());
+                        let label = format!("{} — {} · {} · {} mm", setup_name(&text(&s["name"])), text(&s["body"]), material, stock.join(" × "));
+                        if crate::ui_kit::list_picker(ui, &format!("cam_setup_{id}"), &label, d.setup == Some(id)).clicked() {
+                            d.setup = Some(id);
+                        }
+                        if crate::ui_kit::button(ui, tr_label("Delete"), crate::ui_kit::Button::Small).clicked() {
+                            action = Some(Action::Delete(id));
+                        }
+                    });
+                    if let Some(e) = s["error"].as_str() {
+                        ui.label(RichText::new(cam_text(e)).color(t.error));
+                    }
+                }
+                ui.horizontal_wrapped(|ui| {
+                    crate::ui_kit::row(ui, "Material", |ui| crate::ui_kit::dropdown(ui, "cam_material", &mut d.material, &MATERIAL_LABELS));
+                    crate::ui_kit::row(ui, "Origin", |ui| crate::ui_kit::dropdown(ui, "cam_origin", &mut d.origin, &ORIGIN_LABELS));
+                    crate::ui_kit::checkbox(ui, tr_label("Turn over"), &mut d.flipped);
+                });
+                ui.horizontal_wrapped(|ui| {
+                    field(ui, "Side margin", &mut d.margin_side, 48.0);
+                    field(ui, "Top margin", &mut d.margin_top, 48.0);
+                    field(ui, "Bottom margin", &mut d.margin_bottom, 48.0);
+                    if crate::ui_kit::button(ui, "New Setup", crate::ui_kit::Button::Normal).clicked() {
+                        action = Some(Action::NewSetup);
+                    }
+                });
+            });
+            crate::ui_kit::section_count(ui, "cam_tools", "Tools", tools.is_empty(), Some(tools.len()), |ui| {
+                // Tools.
+                if tools.is_empty() {
+                    ui.label(RichText::new(tr_label("No tools yet")).color(t.text_dim));
+                }
+                egui::Grid::new("sc_cam_tools").num_columns(3).striped(true).spacing([12.0, 4.0]).show(ui, |ui| {
+                    for tool in &tools {
+                        let n = tool["number"].as_u64().unwrap_or(0);
+                        ui.label(format!("T{n}"));
+                        ui.label(format!("{} · {} {} mm", tool_name(&text(&tool["name"])), tr_label("Flute length"), text(&tool["flute_length"])));
+                        if crate::ui_kit::button(ui, format!("{} T{n}", tr_label("Delete")), crate::ui_kit::Button::Small).clicked() {
+                            action = Some(Action::DeleteTool(u32::try_from(n).unwrap_or(0)));
+                        }
+                        ui.end_row();
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    field(ui, "Number", &mut d.tool_number, 48.0);
+                    field(ui, "Diameter", &mut d.tool_diameter, 64.0);
+                    field(ui, "Flute length", &mut d.tool_flute, 56.0);
+                    crate::ui_kit::row(ui, "Type", |ui| crate::ui_kit::dropdown(ui, "cam_tool_kind", &mut d.tool_kind, &TOOL_KIND_LABELS));
+                    if crate::ui_kit::button(ui, "Add Tool", crate::ui_kit::Button::Normal).clicked() {
+                        action = Some(Action::AddTool);
+                    }
+                });
+            });
         }
     });
     if let Some(a) = action {

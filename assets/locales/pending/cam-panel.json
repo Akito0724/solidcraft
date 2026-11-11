@@ -112,7 +112,8 @@
     "Update Operation": "تحديث العملية",
     "Starting values": "القيم الابتدائية",
     "cam.panel.cutting_hint": "الحقول الفارغة تأخذ القيم الابتدائية للمادة. الخطوة الجانبية نسبة مئوية من قطر الأداة.",
-    "cam.panel.editing": "تعديل {name}: اختره مرة أخرى أو ألغِ لإضافة عملية جديدة."
+    "cam.panel.editing": "تعديل {name}: اختره مرة أخرى أو ألغِ لإضافة عملية جديدة.",
+    "Cutting data": "بيانات القطع"
   },
   "en": {
     "Machining": "Machining",
@@ -227,7 +228,8 @@
     "Update Operation": "Update Operation",
     "Starting values": "Starting values",
     "cam.panel.cutting_hint": "Empty fields take the material's starting values. Stepover is a percentage of the tool's diameter.",
-    "cam.panel.editing": "Changing {name}: pick it again or Cancel to add a new one."
+    "cam.panel.editing": "Changing {name}: pick it again or Cancel to add a new one.",
+    "Cutting data": "Cutting data"
   },
   "he": {
     "Machining": "עיבוד",
@@ -342,7 +344,8 @@
     "Update Operation": "עדכון פעולה",
     "Starting values": "ערכי התחלה",
     "cam.panel.cutting_hint": "שדות ריקים מקבלים את ערכי ההתחלה של החומר. הצעד הצידי הוא אחוז מקוטר הכלי.",
-    "cam.panel.editing": "משנים את {name}: בחרו בו שוב או בטלו כדי להוסיף חדשה."
+    "cam.panel.editing": "משנים את {name}: בחרו בו שוב או בטלו כדי להוסיף חדשה.",
+    "Cutting data": "נתוני חיתוך"
   },
   "ja": {
     "Machining": "加工",
@@ -457,7 +460,8 @@
     "Update Operation": "工程を更新",
     "Starting values": "標準値に戻す",
     "cam.panel.cutting_hint": "空欄は材料ごとの標準値になります。ステップオーバーは工具径に対する%です。",
-    "cam.panel.editing": "{name} を変更中（もう一度クリックするか「キャンセル」で新規追加に戻ります）"
+    "cam.panel.editing": "{name} を変更中（もう一度クリックするか「キャンセル」で新規追加に戻ります）",
+    "Cutting data": "切削条件"
   },
   "vi": {
     "Machining": "Gia công",
@@ -572,7 +576,8 @@
     "Update Operation": "Cập nhật nguyên công",
     "Starting values": "Giá trị ban đầu",
     "cam.panel.cutting_hint": "Ô trống dùng giá trị ban đầu của vật liệu. Bước ngang tính theo % đường kính dao.",
-    "cam.panel.editing": "Đang sửa {name}: bấm lại hoặc Hủy để thêm mới."
+    "cam.panel.editing": "Đang sửa {name}: bấm lại hoặc Hủy để thêm mới.",
+    "Cutting data": "Thông số cắt"
   },
   "zh": {
     "Machining": "加工",
@@ -687,6 +692,7 @@
     "Update Operation": "更新工序",
     "Starting values": "恢复默认值",
     "cam.panel.cutting_hint": "留空则使用材料的默认值。步距为刀具直径的百分比。",
-    "cam.panel.editing": "正在修改 {name}：再次点击或按“取消”返回新建。"
+    "cam.panel.editing": "正在修改 {name}：再次点击或按“取消”返回新建。",
+    "Cutting data": "切削参数"
   }
 }
