@@ -42,6 +42,11 @@ impl Frame {
         if self.flipped { -(z - self.origin[2]) } else { z - self.origin[2] }
     }
 
+    /// A machine height (Z) as a model height.
+    pub fn z_to_model(&self, z: f64) -> f64 {
+        if self.flipped { self.origin[2] - z } else { z + self.origin[2] }
+    }
+
     /// A profile drawn in the model's XY plane, seen from the machine. Turning the part over
     /// mirrors Y, which turns arcs the other way.
     pub fn loop_to_machine(&self, l: &Loop) -> Loop {

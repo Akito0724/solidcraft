@@ -11,7 +11,8 @@
 use serde::{Deserialize, Serialize};
 use solidcore_record::{Plane, Vec3};
 use solidcraft_cam::{
-    Clearance, ContourOp, Cutting, Depths, DrillOp, FaceOp, Frame, Job, Loop, Material, Operation, PocketOp, Region, Side, Tabs, Tool, Vertex,
+    Clearance, ContourOp, Cutting, Depths, DrillOp, FaceOp, Frame, Job, Loop, Material, Operation, PocketOp, Region, Side, Tabs, Tool, Toolpath,
+    Vertex,
 };
 use solidcraft_geom::prelude::*;
 use solidcraft_sketch::{LinkGeom, LinkKind, LinkSource};
@@ -116,33 +117,40 @@ pub struct GeoPick {
     pub at: [f64; 3],
 }
 
-/// What an operation cuts.
+/// What an operation cuts. How deep is the model's business: each cut goes down to where the
+/// model puts its bottom (the part's top for facing, the floor for a pocket, where the material
+/// under a contour or in a hole begins, or through the part), moved by `offset` (mm, up when
+/// positive). Only a cut that goes through the part may be moved below that (by default it goes
+/// [`BREAKTHROUGH`] below), so no setting cuts into the model.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OpSpec {
-    /// Facing the stock's top down to `depth` below it (default: down to the part's top).
+    /// Facing the stock's top down to the part's top.
     Face {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        depth: Option<f64>,
+        offset: Option<f64>,
     },
     /// Clearing down to a floor face, around the islands in it.
-    Pocket { face: GeoPick },
-    /// Following the outer boundary of a face, `depth` below the stock's top (default: through
-    /// the stock).
+    Pocket {
+        face: GeoPick,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        offset: Option<f64>,
+    },
+    /// Following the outer boundary of a face, down to where the material beside it begins, or
+    /// through the part.
     Contour {
         face: GeoPick,
         side: Side,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        depth: Option<f64>,
+        offset: Option<f64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tabs: Option<Tabs>,
     },
-    /// Drilling at the centres of circular edges, `depth` below the stock's top (default: through
-    /// the stock).
+    /// Drilling at the centres of circular edges, down to the holes' bottom, or through the part.
     Drill {
         edges: Vec<GeoPick>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        depth: Option<f64>,
+        offset: Option<f64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         peck: Option<f64>,
     },
@@ -172,8 +180,9 @@ pub struct CamPlan {
     /// The stock's extent in machine coordinates.
     pub stock_min: [f64; 3],
     pub stock_max: [f64; 3],
-    /// The part's top (the face that faces up) in machine Z.
+    /// The part's top (the face that faces up) and bottom in machine Z.
     pub part_top: f64,
+    pub part_bottom: f64,
     pub jobs: Vec<(u64, std::result::Result<Job, String>)>,
 }
 
@@ -201,8 +210,9 @@ impl Document {
         let stock_min = [0, 1, 2].map(|i| corners[0][i].min(corners[1][i]));
         let stock_max = [0, 1, 2].map(|i| corners[0][i].max(corners[1][i]));
         let part_top = frame.z_to_machine(if setup.flipped { b.min.z } else { b.max.z });
+        let part_bottom = frame.z_to_machine(if setup.flipped { b.max.z } else { b.min.z });
         let clearance = Clearance { safe_z: setup.safe_z, retract: setup.retract };
-        let plan = CamPlan { frame, clearance, stock_min, stock_max, part_top, jobs: Vec::new() };
+        let plan = CamPlan { frame, clearance, stock_min, stock_max, part_top, part_bottom, jobs: Vec::new() };
         let jobs = self
             .cam
             .operations
@@ -217,20 +227,30 @@ impl Document {
         let tool = self.cam.tool(op.tool).ok_or_else(|| DocError::Invalid(format!("there is no tool T{} in the library", op.tool)))?.clone();
         let cutting = op.cutting.unwrap_or_else(|| Cutting::starting(setup.material, &tool));
         let frame = &plan.frame;
-        let through = plan.stock_min[2] - BREAKTHROUGH;
-        let below_top = |depth: Option<f64>| -> Result<f64> {
-            match depth {
-                None => Ok(through),
-                Some(d) if d.is_finite() && d > 0.0 => Ok(-d),
-                Some(_) => Err(DocError::Invalid("the depth must be more than 0 mm".into())),
-            }
+        let body = st.body(&setup.body).ok_or_else(|| DocError::Invalid(format!("there is no body `{}`", setup.body)))?;
+        // Down the tool's axis, in the model: −Z, or +Z for a part turned over.
+        let down = if setup.flipped { 1.0 } else { -1.0 };
+        let stock_floor = frame.z_to_model(plan.stock_min[2]);
+        // Where the cut's bottom goes: the model's bottom for it, moved by the offset. Only a cut
+        // through the part (`base` None: no material under it) may go below; by default it goes
+        // BREAKTHROUGH below the stock.
+        let bottom = |base: Option<f64>, offset: Option<f64>| -> Result<f64> {
+            let through = base.is_none();
+            let o = match offset {
+                None if through => -BREAKTHROUGH,
+                None => 0.0,
+                Some(v) if !v.is_finite() || v.abs() > 1000.0 => return Err(DocError::Invalid("the offset must be a number of mm".into())),
+                Some(v) if v < 0.0 && !through => {
+                    return Err(DocError::Invalid("only a cut that goes through the part can reach below where the model puts its bottom".into()));
+                }
+                Some(v) => v,
+            };
+            Ok(base.unwrap_or(plan.stock_min[2]) + o)
         };
+        let radius = tool.diameter / 2.0;
         let operation = match &op.spec {
-            OpSpec::Face { depth } => {
-                let bottom = match depth {
-                    None => plan.part_top,
-                    Some(_) => below_top(*depth)?,
-                };
+            OpSpec::Face { offset } => {
+                let bottom = bottom(Some(plan.part_top), *offset)?;
                 if bottom >= -1e-9 {
                     return Err(DocError::Invalid("there is nothing to face: the stock has no margin above the part".into()));
                 }
@@ -240,7 +260,7 @@ impl Document {
                     depths: Depths { top: 0.0, bottom },
                 })
             }
-            OpSpec::Pocket { face } => {
+            OpSpec::Pocket { face, offset } => {
                 let (region, z, up) = self.cam_face(st, face)?;
                 if up == setup.flipped {
                     return Err(DocError::Invalid("pick the pocket's floor, a face that faces up in this setup".into()));
@@ -249,26 +269,52 @@ impl Document {
                     outer: frame.loop_to_machine(&region.outer),
                     islands: region.islands.iter().map(|l| frame.loop_to_machine(l)).collect(),
                 };
-                Operation::Pocket(PocketOp { region, depths: Depths { top: 0.0, bottom: frame.z_to_machine(z) } })
+                Operation::Pocket(PocketOp { region, depths: Depths { top: 0.0, bottom: bottom(Some(frame.z_to_machine(z)), *offset)? } })
             }
-            OpSpec::Contour { face, side, depth, tabs } => {
-                let (region, _, _) = self.cam_face(st, face)?;
+            OpSpec::Contour { face, side, offset, tabs } => {
+                let (region, z, _) = self.cam_face(st, face)?;
+                // Where the tool sweeps: beside the outline on its side, two radii wide.
+                let reach = match side {
+                    Side::Outside => [-0.05, -radius, 0.05 - 2.0 * radius],
+                    Side::Inside => [0.05, radius, 2.0 * radius - 0.05],
+                    Side::On => [0.05 - radius, 0.0, radius - 0.05],
+                };
+                let mut probes = Vec::new();
+                for d in reach {
+                    for l in region.outer.offset(d) {
+                        probes.extend(along(&l, 24));
+                    }
+                }
+                let base = first_material(&body.body, &probes, z, stock_floor, down)?;
                 Operation::Contour(ContourOp {
                     profile: frame.loop_to_machine(&region.outer),
                     side: *side,
-                    depths: Depths { top: 0.0, bottom: below_top(*depth)? },
+                    depths: Depths { top: 0.0, bottom: bottom(base.map(|m| frame.z_to_machine(m)), *offset)? },
                     tabs: *tabs,
                 })
             }
-            OpSpec::Drill { edges, depth, peck } => {
+            OpSpec::Drill { edges, offset, peck } => {
                 if edges.is_empty() {
                     return Err(DocError::Invalid("pick the holes' circular edges".into()));
                 }
-                let points = edges
-                    .iter()
-                    .map(|e| self.cam_circle(st, e).map(|(c, _)| frame.to_machine([c.0, c.1, 0.0])).map(|p| (p[0], p[1])))
-                    .collect::<Result<Vec<_>>>()?;
-                Operation::Drill(DrillOp { points, depths: Depths { top: 0.0, bottom: below_top(*depth)? }, peck: *peck })
+                let mut points = Vec::new();
+                // The shallowest hole's bottom, so no hole is drilled deeper than the model's.
+                let mut base: Option<f64> = None;
+                let mut through = true;
+                for e in edges {
+                    let ((cx, cy), r) = self.cam_circle(st, e)?;
+                    let m = frame.to_machine([cx, cy, 0.0]);
+                    points.push((m[0], m[1]));
+                    let a = 0.7 * r.min(radius);
+                    let probes = [(cx, cy), (cx + a, cy), (cx - a, cy), (cx, cy + a), (cx, cy - a)];
+                    if let Some(floor) = first_material(&body.body, &probes, e.at[2], stock_floor, down)? {
+                        let floor = frame.z_to_machine(floor);
+                        through = false;
+                        base = Some(base.map_or(floor, |b: f64| b.max(floor)));
+                    }
+                }
+                let base = if through { None } else { base };
+                Operation::Drill(DrillOp { points, depths: Depths { top: 0.0, bottom: bottom(base, *offset)? }, peck: *peck })
             }
         };
         Ok(Job { name: op.name.clone(), operation, tool, cutting })
@@ -312,6 +358,103 @@ impl Document {
         }
         Err(DocError::Invalid("the edge is not a circle seen from above: pick a hole's round edge".into()))
     }
+}
+
+impl Document {
+    /// Where the toolpath of setup `id`'s operation would cut into the model: the first point
+    /// found (model coordinates), or `None`. The flat-bottomed cutter is sampled along its cuts
+    /// just above its tip, across its width, wherever its tip is below the part's top.
+    pub fn cam_gouge(&self, st: &ModelState, id: u64, plan: &CamPlan, path: &Toolpath) -> Option<[f64; 3]> {
+        let setup = self.cam.setup(id)?;
+        let body = st.body(&setup.body)?;
+        let radius = (path.tool.diameter / 2.0 - 0.05).max(0.0);
+        let points = path.points(1.0);
+        let below: Vec<_> = points.iter().filter(|(p, rapid)| !rapid && p.z < plan.part_top - 1e-6).map(|(p, _)| *p).collect();
+        let stride = (below.len() * 9).div_ceil(GOUGE_PROBES).max(1);
+        let ring: Vec<(f64, f64)> = std::iter::once((0.0, 0.0))
+            .chain((0..8).map(|k| {
+                let a = f64::from(k) * std::f64::consts::FRAC_PI_4;
+                (radius * a.cos(), radius * a.sin())
+            }))
+            .collect();
+        for p in below.iter().step_by(stride) {
+            for (dx, dy) in &ring {
+                let m = plan.frame.to_model([p.x + dx, p.y + dy, p.z + 0.05]);
+                if matches!(body.body.classify_point(Vec3::new(m[0], m[1], m[2])), Ok(solidcraft_kernel::PointClass::Inside)) {
+                    return Some(m);
+                }
+            }
+        }
+        None
+    }
+}
+
+/// The most points the gouge check classifies against the model.
+const GOUGE_PROBES: usize = 3000;
+
+/// `n` points spread along a loop.
+fn along(l: &Loop, n: usize) -> Vec<(f64, f64)> {
+    let segments = l.segments();
+    let total: f64 = segments.iter().map(|s| s.length()).sum();
+    if total <= 1e-9 {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(n);
+    for k in 0..n {
+        let mut d = total * (k as f64 + 0.5) / n as f64;
+        for s in &segments {
+            let len = s.length();
+            if d <= len || std::ptr::eq(s, segments.last().unwrap_or(s)) {
+                out.push(s.at(if len > 1e-12 { (d / len).clamp(0.0, 1.0) } else { 0.0 }));
+                break;
+            }
+            d -= len;
+        }
+    }
+    out
+}
+
+/// Going down (`down`: the sign of the model's Z) from the face at `from` to `to` over each of
+/// `probes` (model XY), the highest point where the body's material begins: the bottom a cut
+/// there may reach (`from` itself where the material is right under the face). `None` when there
+/// is none down to `to` (the cut may go through).
+fn first_material(body: &solidcraft_kernel::Body, probes: &[(f64, f64)], from: f64, to: f64, down: f64) -> Result<Option<f64>> {
+    const STEP: f64 = 0.5;
+    let inside = |x: f64, y: f64, z: f64| matches!(body.classify_point(Vec3::new(x, y, z)), Ok(solidcraft_kernel::PointClass::Inside));
+    let span = (to - from) * down;
+    if !span.is_finite() || span <= 0.0 {
+        return Ok(None);
+    }
+    let steps = ((span / STEP).ceil() as usize).clamp(1, 4000);
+    let mut best: Option<f64> = None;
+    for &(x, y) in probes.iter().take(256) {
+        // Already past a higher floor found elsewhere: nothing here can raise it.
+        let mut above = from;
+        for k in 0..=steps {
+            // Just under the face first, then every STEP.
+            let z = from + down * if k == 0 { 0.05 } else { span.min(k as f64 * STEP) };
+            if best.is_some_and(|b| (z - b) * down > 0.0) {
+                break;
+            }
+            if inside(x, y, z) {
+                // Between `above` (empty) and `z` (material): halve down to 0.01 mm.
+                let (mut hi, mut lo) = (above, z);
+                for _ in 0..8 {
+                    let mid = (hi + lo) / 2.0;
+                    if inside(x, y, mid) {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                let floor = hi;
+                best = Some(best.map_or(floor, |b| if (floor - b) * down < 0.0 { floor } else { b }));
+                break;
+            }
+            above = z;
+        }
+    }
+    Ok(best)
 }
 
 fn finite_point(at: [f64; 3]) -> Result<Vec3> {

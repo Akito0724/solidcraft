@@ -148,10 +148,15 @@ pub struct CamOperationParams {
     /// Contour: `outside` (default), `inside` or `on`.
     #[serde(default)]
     pub side: Option<String>,
-    /// Below the stock's top (mm). Face default: down to the part's top; contour and drill
-    /// default: through the stock.
+    /// How far to move the cut's bottom from where the model puts it (mm, up when positive):
+    /// the part's top for facing, the floor for a pocket, where the material under a contour or
+    /// in a hole begins. Only a cut through the part may go below it (default: 0.5 mm below the
+    /// stock). The toolpath is refused where it would cut into the model.
     #[serde(default)]
-    pub depth: Option<f64>,
+    pub offset: Option<f64>,
+    /// Drop a changed operation's offset: back to where the model puts the bottom.
+    #[serde(default)]
+    pub default_offset: Option<bool>,
     /// Contour: tabs to hold the part; `count` 0 removes them.
     #[serde(default)]
     pub tabs: Option<CamTabsParam>,
@@ -220,9 +225,12 @@ pub struct CamOpSummary {
     /// Whether that differs from the material's starting values on purpose.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub custom_cutting: bool,
-    /// Its depth below the stock's top (mm), when one was given.
+    /// Its offset from the bottom the model gives (mm), when one was given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub depth: Option<f64>,
+    pub offset: Option<f64>,
+    /// The lowest its tool goes, below the stock's top (machine Z, mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lowest: Option<f64>,
     /// Contour: `outside`, `inside` or `on`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side: Option<String>,

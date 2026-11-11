@@ -51,8 +51,9 @@ pub struct CamPanel {
     pub side: usize,
     /// The operation the form changes (`None`: the form adds one).
     pub editing: Option<u64>,
-    /// Empty: the operation's default depth.
-    pub depth: String,
+    /// How far the bottom moves from where the model puts it (mm, up when positive). Empty: the
+    /// model's bottom (through by 0.5 mm for a cut through the part).
+    pub offset: String,
     // Cutting data; empty: the material's starting values (or the operation's own, when changing one).
     pub rpm: String,
     pub feed: String,
@@ -101,6 +102,8 @@ struct Preview {
     /// The cutting data the operation runs with, and its time.
     cutting: Value,
     minutes: f64,
+    /// The lowest the tool goes, below the stock's top (machine Z).
+    lowest: Option<f64>,
     lines: PathLines,
 }
 
@@ -132,7 +135,7 @@ impl Default for CamPanel {
             tool: 0,
             side: 0,
             editing: None,
-            depth: String::new(),
+            offset: String::new(),
             rpm: String::new(),
             feed: String::new(),
             plunge: String::new(),
@@ -230,7 +233,7 @@ impl CamPanel {
         self.editing = op["id"].as_u64();
         self.kind = KINDS.iter().position(|k| Some(*k) == op["kind"].as_str()).unwrap_or(self.kind);
         self.tool = tools.iter().position(|t| t["number"] == op["tool"]).unwrap_or(self.tool);
-        self.depth = num(&op["depth"]);
+        self.offset = num(&op["offset"]);
         self.side = SIDES.iter().position(|k| Some(*k) == op["side"].as_str()).unwrap_or(0);
         if op["tabs"].is_object() {
             self.tabs = text(&op["tabs"]["count"]);
@@ -263,12 +266,13 @@ impl CamPanel {
         if self.preview.as_ref().is_some_and(|p| p.key == key && p.revision == revision) {
             return;
         }
-        let mut preview = Preview { key, revision, error: None, cutting: Value::Null, minutes: 0.0, lines: PathLines::default() };
+        let mut preview = Preview { key, revision, error: None, cutting: Value::Null, minutes: 0.0, lowest: None, lines: PathLines::default() };
         match params.and_then(|p| app.session.execute("cam.preview", &p).map_err(|e| e.to_string())) {
             Ok(v) => {
                 preview.error = v["operation"]["error"].as_str().map(str::to_string);
                 preview.cutting = v["operation"]["cutting"].clone();
                 preview.minutes = v["operation"]["minutes"].as_f64().unwrap_or(0.0);
+                preview.lowest = v["operation"]["lowest"].as_f64();
                 for run in v["cuts"].as_array().into_iter().flatten() {
                     let pts: Vec<Vec3> = run.as_array().into_iter().flatten().filter_map(point).collect();
                     if pts.len() > 1 {
@@ -291,7 +295,7 @@ impl CamPanel {
         self.editing = None;
         self.reset_cutting = false;
         self.preview = None;
-        for f in [&mut self.rpm, &mut self.feed, &mut self.plunge, &mut self.stepdown, &mut self.stepover, &mut self.depth] {
+        for f in [&mut self.rpm, &mut self.feed, &mut self.plunge, &mut self.stepdown, &mut self.stepover, &mut self.offset] {
             f.clear();
         }
     }
@@ -333,8 +337,11 @@ impl CamPanel {
         if let Some(id) = self.editing {
             p["id"] = json!(id);
         }
-        if let Some(d) = number(&self.depth) {
-            p["depth"] = json!(d);
+        match number(&self.offset) {
+            Some(o) => p["offset"] = json!(o),
+            // Emptied while changing an operation: back to the model's bottom.
+            None if changing => p["default_offset"] = json!(true),
+            None => {}
         }
         if self.reset_cutting {
             p["reset_cutting"] = json!(true);
@@ -581,6 +588,9 @@ const MESSAGES: &[(&str, &str)] = &[
     ("there is no tool T{n} in the library", "cam.error.no_tool"),
     ("there is no tool T{n} in the library (cam.tool adds one)", "cam.error.no_tool"),
     ("the depth must be more than 0 mm", "cam.error.depth"),
+    ("only a cut that goes through the part can reach below where the model puts its bottom", "cam.error.below_model"),
+    ("the offset must be a number of mm", "cam.error.offset"),
+    ("the toolpath cuts into the model near ({x}, {y}, {z})", "cam.error.gouge"),
     ("there is nothing to face: the stock has no margin above the part", "cam.error.nothing_to_face"),
     ("pick the pocket's floor, a face that faces up in this setup", "cam.error.pocket_floor"),
     ("pick the holes' circular edges", "cam.error.hole_edges"),
@@ -1112,8 +1122,12 @@ fn operation_body(ui: &mut egui::Ui, d: &mut CamPanel, kind: &str, tools: &[Valu
             crate::ui_kit::text(ui, tr(what), crate::ui_kit::Text::Hint("tool"));
         }
         2 => {
-            let through = if kind == "face" { tr_label("Part top") } else { tr_label("Through") };
-            field(ui, "Depth", &mut d.depth, through);
+            field(ui, "Bottom offset", &mut d.offset, "0");
+            crate::ui_kit::text(ui, tr("cam.panel.offset_hint"), crate::ui_kit::Text::Hint("tool"));
+            if let Some(lowest) = d.preview.as_ref().and_then(|p| p.lowest) {
+                let mm = format!("{:.2}", -lowest);
+                ui.label(RichText::new(solidcraft_ui_text::format("cam.panel.lowest", &[("mm", &mm)])).small().color(t.text_dim));
+            }
             if kind == "contour" {
                 field(ui, "Tabs", &mut d.tabs, "0");
                 field(ui, "Tab width", &mut d.tab_width, "6");
@@ -1392,6 +1406,7 @@ mod tests {
                 continue;
             }
             let text = pattern.replace("{depth}", "15.50").replace("{flute}", "12.70").replace("{tool}", "T9").replace("{body}", "Body1");
+            let text = text.replace("{x}", "1.0").replace("{y}", "-2.5").replace("{z}", "9.9");
             let text = text.replace("{n}", "3").replace("{name}", "Setup 9");
             let back = cam_text(&format!("invalid parameters for `cam.operation`: {text}"));
             assert_eq!(back.to_lowercase(), text.to_lowercase(), "{id}");
@@ -1610,7 +1625,7 @@ mod tests {
         assert!(sim.done() && sim.stock.removed() > 0.0);
         assert_eq!(super::scene_key(&h.app), None, "the toolpath lines step aside while it plays");
         h.frames(2);
-        h.app.run("cam.face", json!({"tool": 1, "depth": 0.5})).unwrap();
+        h.app.run("cam.face", json!({"tool": 1, "offset": 0.5})).unwrap();
         h.frames(2);
         assert!(h.app.machining.as_ref().unwrap().sim.is_none(), "a change to the design ends it");
     }

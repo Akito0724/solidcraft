@@ -344,14 +344,14 @@ fn summary(op: &CamOperation, path: std::result::Result<&Toolpath, &String>) -> 
         stepdown: round(t.cutting.stepdown, 3),
         stepover: round(t.cutting.stepover, 3),
     });
-    let (depth, side, tabs, peck) = match &op.spec {
-        OpSpec::Face { depth } => (*depth, None, None, None),
-        OpSpec::Pocket { .. } => (None, None, None, None),
-        OpSpec::Contour { side, depth, tabs, .. } => {
-            (*depth, Some(side_name(*side).to_string()), tabs.map(|t| CamTabsInfo { count: t.count, width: t.width, height: t.height }), None)
+    let (offset, side, tabs, peck) = match &op.spec {
+        OpSpec::Face { offset } | OpSpec::Pocket { offset, .. } => (*offset, None, None, None),
+        OpSpec::Contour { side, offset, tabs, .. } => {
+            (*offset, Some(side_name(*side).to_string()), tabs.map(|t| CamTabsInfo { count: t.count, width: t.width, height: t.height }), None)
         }
-        OpSpec::Drill { depth, peck, .. } => (*depth, None, None, *peck),
+        OpSpec::Drill { offset, peck, .. } => (*offset, None, None, *peck),
     };
+    let lowest = path.ok().and_then(Toolpath::lowest_z).map(|z| round(z, 3));
     CamOpSummary {
         id: op.id,
         name: op.name.clone(),
@@ -363,7 +363,8 @@ fn summary(op: &CamOperation, path: std::result::Result<&Toolpath, &String>) -> 
         error,
         cutting,
         custom_cutting: op.cutting.is_some(),
-        depth,
+        offset,
+        lowest,
         side,
         tabs,
         peck,
@@ -455,7 +456,10 @@ fn operation_cmd(s: &mut Session, p: &Value) -> Result<Value> {
             None => cam.operations.push(op.clone()),
         }
     }
-    let path = toolpath(s, id);
+    let path = toolpath(s, id).and_then(|t| match gouge(s, setup_id, &op, &t) {
+        Some(why) => Err(why),
+        None => Ok(t),
+    });
     if let Err(why) = &path {
         *s.doc_mut() = before;
         return Err(bad(cmd, why.clone()));
@@ -476,16 +480,20 @@ fn preview_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         None => doc.cam.operations.push(op.clone()),
     }
     let st = s.model.state();
-    let plan = doc.cam_plan(&st, setup).map_err(|e| bad(cmd, e.to_string()))?;
+    let mut plan = doc.cam_plan(&st, setup).map_err(|e| bad(cmd, e.to_string()))?;
     let frame = plan.frame;
-    let path = plan
-        .jobs
+    let jobs = std::mem::take(&mut plan.jobs);
+    let path = jobs
         .into_iter()
         .find(|(o, _)| *o == op.id)
         .map(|(_, j)| j)
         .ok_or_else(|| format!("there is no operation {}", op.id))
         .and_then(|j| j)
-        .and_then(|j| solidcraft_cam::generate(&j, &plan.clearance).map_err(|e| named(&op.name, &e)));
+        .and_then(|j| solidcraft_cam::generate(&j, &plan.clearance).map_err(|e| named(&op.name, &e)))
+        .and_then(|t| match gouge_in(&doc, &st, setup, &plan, &op, &t) {
+            Some(why) => Err(why),
+            None => Ok(t),
+        });
     let model = |p: solidcraft_cam::P3| frame.to_model([p.x, p.y, p.z]).map(|v| round(v, 4));
     let (mut cuts, mut rapids) = (Vec::new(), Vec::new());
     if let Ok(t) = &path {
@@ -535,17 +543,19 @@ fn build_operation(s: &Session, cmd: &str, q: CamOperationParams) -> Result<(Cam
     let face = || -> Result<GeoPick> {
         match (&q.face, old) {
             (Some(f), _) => Ok(pick(f, &body)),
-            (None, Some(OpSpec::Pocket { face } | OpSpec::Contour { face, .. })) => Ok(face.clone()),
+            (None, Some(OpSpec::Pocket { face, .. } | OpSpec::Contour { face, .. })) => Ok(face.clone()),
             _ => Err(bad(cmd, "`face` is required: a point on the face")),
         }
     };
-    let depth = q.depth.or(match old {
-        Some(OpSpec::Face { depth } | OpSpec::Contour { depth, .. } | OpSpec::Drill { depth, .. }) => *depth,
-        _ => None,
-    });
+    let kept = match old {
+        _ if q.default_offset == Some(true) => None,
+        Some(OpSpec::Face { offset } | OpSpec::Pocket { offset, .. } | OpSpec::Contour { offset, .. } | OpSpec::Drill { offset, .. }) => *offset,
+        None => None,
+    };
+    let offset = q.offset.or(kept);
     let spec = match kind {
-        Some("face") => OpSpec::Face { depth },
-        Some("pocket") => OpSpec::Pocket { face: face()? },
+        Some("face") => OpSpec::Face { offset },
+        Some("pocket") => OpSpec::Pocket { face: face()?, offset },
         Some("contour") => {
             let side = match q.side.as_deref() {
                 Some("outside") => Side::Outside,
@@ -563,7 +573,7 @@ fn build_operation(s: &Session, cmd: &str, q: CamOperationParams) -> Result<(Cam
                 (None, Some(OpSpec::Contour { tabs, .. })) => *tabs,
                 (None, _) => None,
             };
-            OpSpec::Contour { face: face()?, side, depth, tabs }
+            OpSpec::Contour { face: face()?, side, offset, tabs }
         }
         Some("drill") => {
             let edges = match (&q.edges, old) {
@@ -577,7 +587,7 @@ fn build_operation(s: &Session, cmd: &str, q: CamOperationParams) -> Result<(Cam
                 (None, Some(OpSpec::Drill { peck, .. })) => *peck,
                 (None, _) => None,
             };
-            OpSpec::Drill { edges, depth, peck }
+            OpSpec::Drill { edges, offset, peck }
         }
         Some(k) => return Err(bad(cmd, format!("`type` must be face, pocket, contour or drill, not {k}"))),
         None => return Err(bad(cmd, "`type` is required for a new operation")),
@@ -840,6 +850,29 @@ fn toolpaths_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     reply(cmd, CamToolpaths { setup, stock, paths, truncated, param_warnings: Vec::new() })
 }
 
+/// Why `path` (operation `op` of setup `setup`) can't be cut: where it would cut into the model.
+/// A contour on its line cuts the part's edge on purpose and isn't checked.
+fn gouge(s: &Session, setup: u64, op: &CamOperation, path: &Toolpath) -> Option<String> {
+    let st = s.model.state();
+    let plan = s.doc.cam_plan(&st, setup).ok()?;
+    gouge_in(&s.doc, &st, setup, &plan, op, path)
+}
+
+fn gouge_in(
+    doc: &solidcraft_doc::Document,
+    st: &solidcraft_doc::ModelState,
+    setup: u64,
+    plan: &solidcraft_doc::cam::CamPlan,
+    op: &CamOperation,
+    path: &Toolpath,
+) -> Option<String> {
+    if matches!(op.spec, OpSpec::Contour { side: Side::On, .. }) {
+        return None;
+    }
+    let at = doc.cam_gouge(st, setup, plan, path)?;
+    Some(named(&op.name, &format!("the toolpath cuts into the model near ({:.1}, {:.1}, {:.1})", at[0], at[1], at[2])))
+}
+
 /// An operation's error, with its name in front unless the toolpath's own message already has it.
 fn named(name: &str, e: &dyn std::fmt::Display) -> String {
     let e = e.to_string();
@@ -1003,7 +1036,7 @@ mod tests {
         assert_eq!(s.doc.cam.operations.len(), count, "nothing is added");
         assert_eq!(s.undo.len(), undo);
         // A toolpath that can't be made says why, still without a change.
-        let deep = s.execute("cam.preview", &json!({"type": "contour", "tool": 1, "face": {"at": [10, 10, 10]}, "depth": 60})).unwrap();
+        let deep = s.execute("cam.preview", &json!({"type": "contour", "tool": 1, "face": {"at": [10, 10, 10]}, "offset": -60})).unwrap();
         assert!(deep["operation"]["error"].is_string(), "{deep}");
         assert!(deep["cuts"].as_array().unwrap().is_empty());
         // Changing an operation shows the change, and the operation itself stays.
@@ -1011,6 +1044,44 @@ mod tests {
         let changed = s.execute("cam.preview", &json!({"id": id, "stepdown": 0.5})).unwrap();
         assert_eq!(changed["operation"]["cutting"]["stepdown"], 0.5);
         assert!(s.doc.cam.operations.iter().find(|o| o.id == id).unwrap().cutting.is_none());
+    }
+
+    #[test]
+    fn bottoms_come_from_the_model_and_nothing_cuts_into_it() {
+        let mut s = block();
+        s.execute("cam.tool", &json!({"number": 1, "diameter": 3.175, "flute_length": 20})).unwrap();
+        s.execute("cam.tool", &json!({"number": 2, "diameter": 8, "flute_length": 20})).unwrap();
+        s.execute("cam.tool", &json!({"number": 3, "diameter": 5, "flute_length": 20})).unwrap();
+        s.execute("cam.setup", &json!({})).unwrap();
+        // Facing stops at the part's top (1 mm under the stock's), and can't go lower.
+        let face = s.execute("cam.face", &json!({"tool": 1})).unwrap()["operation"].clone();
+        assert!((face["lowest"].as_f64().unwrap() + 1.0).abs() < 1e-6, "{face}");
+        assert!(s.execute("cam.face", &json!({"tool": 1, "offset": -0.5})).is_err(), "below the part's top");
+        let higher = s.execute("cam.face", &json!({"tool": 1, "offset": 0.3})).unwrap()["operation"].clone();
+        assert!((higher["lowest"].as_f64().unwrap() + 0.7).abs() < 1e-6, "{higher}");
+        // Cutting the block out goes through: 0.5 mm below the stock by default, more by offset.
+        let out = s.execute("cam.contour", &json!({"tool": 1, "face": {"at": [10, 10, 10]}})).unwrap()["operation"].clone();
+        assert!((out["lowest"].as_f64().unwrap() + 11.5).abs() < 1e-6, "{out}");
+        let deeper = s.execute("cam.preview", &json!({"type": "contour", "tool": 1, "face": {"at": [10, 10, 10]}, "offset": -1})).unwrap();
+        assert!((deeper["operation"]["lowest"].as_f64().unwrap() + 12.0).abs() < 1e-6, "{deeper}");
+        // The 6 mm hole goes through: drilled through with a 5 mm drill.
+        let hole = s.execute("cam.drill", &json!({"tool": 3, "edges": [{"at": [48, 20, 10]}]})).unwrap()["operation"].clone();
+        assert!((hole["lowest"].as_f64().unwrap() + 11.5).abs() < 1e-6, "{hole}");
+        // An 8 mm drill would cut into the block around the 6 mm hole: refused, saying where.
+        let fat = s.execute("cam.preview", &json!({"type": "drill", "tool": 2, "edges": [{"at": [48, 20, 10]}]})).unwrap();
+        assert!(fat["operation"]["error"].as_str().unwrap_or("").contains("cuts into the model"), "{fat}");
+        assert!(s.execute("cam.drill", &json!({"tool": 2, "edges": [{"at": [48, 20, 10]}]})).is_err());
+        // A contour inside the top face meets the block right under it: it only takes the stock
+        // above the part's top.
+        let inside = s.execute("cam.preview", &json!({"type": "contour", "tool": 1, "face": {"at": [10, 10, 10]}, "side": "inside"})).unwrap();
+        assert!((inside["operation"]["lowest"].as_f64().unwrap() + 1.0).abs() < 0.02, "{inside}");
+        assert!(
+            s.execute("cam.preview", &json!({"type": "contour", "tool": 1, "face": {"at": [10, 10, 10]}, "side": "inside", "offset": -1})).is_err()
+        );
+        // Back to where the model puts the bottom.
+        let id = higher["id"].as_u64().unwrap();
+        let back = s.execute("cam.operation", &json!({"id": id, "default_offset": true})).unwrap()["operation"].clone();
+        assert!(back.get("offset").is_none() && (back["lowest"].as_f64().unwrap() + 1.0).abs() < 1e-6, "{back}");
     }
 
     #[test]
