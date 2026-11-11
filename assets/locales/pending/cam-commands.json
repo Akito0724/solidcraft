@@ -10,7 +10,8 @@
     "cmd.cam_face": "Face Milling",
     "cmd.cam_pocket": "Pocket",
     "cmd.cam_contour": "Contour",
-    "cmd.cam_drill": "Drilling"
+    "cmd.cam_drill": "Drilling",
+    "cmd.cam_move": "Reorder Machining"
   },
   "ja": {
     "cmd.cam_tool": "加工工具",
@@ -23,7 +24,8 @@
     "cmd.cam_face": "面削り",
     "cmd.cam_pocket": "ポケット",
     "cmd.cam_contour": "輪郭",
-    "cmd.cam_drill": "穴あけ"
+    "cmd.cam_drill": "穴あけ",
+    "cmd.cam_move": "加工の順番を変更"
   },
   "zh": {
     "cmd.cam_tool": "加工刀具",
@@ -36,7 +38,8 @@
     "cmd.cam_face": "平面铣",
     "cmd.cam_pocket": "型腔",
     "cmd.cam_contour": "轮廓",
-    "cmd.cam_drill": "钻孔"
+    "cmd.cam_drill": "钻孔",
+    "cmd.cam_move": "调整加工顺序"
   },
   "vi": {
     "cmd.cam_tool": "Dao gia công",
@@ -49,7 +52,8 @@
     "cmd.cam_face": "Phay mặt",
     "cmd.cam_pocket": "Hốc",
     "cmd.cam_contour": "Biên dạng",
-    "cmd.cam_drill": "Khoan"
+    "cmd.cam_drill": "Khoan",
+    "cmd.cam_move": "Sắp xếp nguyên công"
   },
   "ar": {
     "cmd.cam_tool": "أداة التشغيل",
@@ -62,7 +66,8 @@
     "cmd.cam_face": "تسوية السطح",
     "cmd.cam_pocket": "جيب",
     "cmd.cam_contour": "محيط",
-    "cmd.cam_drill": "ثقب"
+    "cmd.cam_drill": "ثقب",
+    "cmd.cam_move": "إعادة ترتيب التشغيل"
   },
   "he": {
     "cmd.cam_tool": "כלי עיבוד",
@@ -75,6 +80,7 @@
     "cmd.cam_face": "יישור משטח",
     "cmd.cam_pocket": "כיס",
     "cmd.cam_contour": "מתאר",
-    "cmd.cam_drill": "קידוח"
+    "cmd.cam_drill": "קידוח",
+    "cmd.cam_move": "סידור פעולות עיבוד"
   }
 }

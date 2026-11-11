@@ -170,6 +170,31 @@ pub struct CamOperationParams {
     /// As a fraction of the tool's diameter.
     #[serde(default)]
     pub stepover: Option<f64>,
+    /// Go back to the material's starting cutting data before applying the values given.
+    #[serde(default)]
+    pub reset_cutting: Option<bool>,
+}
+
+/// The cutting data an operation runs with.
+#[derive(Clone, Copy, Debug, Serialize, JsonSchema)]
+pub struct CamCuttingInfo {
+    pub spindle_rpm: f64,
+    /// mm/min.
+    pub feed: f64,
+    /// mm/min.
+    pub plunge_feed: f64,
+    /// Depth per pass (mm).
+    pub stepdown: f64,
+    /// As a fraction of the tool's diameter.
+    pub stepover: f64,
+}
+
+/// A contour's tabs.
+#[derive(Clone, Copy, Debug, Serialize, JsonSchema)]
+pub struct CamTabsInfo {
+    pub count: u32,
+    pub width: f64,
+    pub height: f64,
 }
 
 /// One operation and its toolpath.
@@ -189,6 +214,44 @@ pub struct CamOpSummary {
     /// Why its toolpath can't be made, when it can't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The cutting data it runs with (when its toolpath can be made).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cutting: Option<CamCuttingInfo>,
+    /// Whether that differs from the material's starting values on purpose.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub custom_cutting: bool,
+    /// Its depth below the stock's top (mm), when one was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth: Option<f64>,
+    /// Contour: `outside`, `inside` or `on`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side: Option<String>,
+    /// Contour: its tabs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tabs: Option<CamTabsInfo>,
+    /// Drill: depth per peck (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peck: Option<f64>,
+}
+
+/// Move an operation earlier (`by` < 0) or later among its setup's operations: the order they
+/// are cut and written in.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CamMoveParams {
+    pub id: u64,
+    #[schemars(range(min = -1000, max = 1000))]
+    pub by: i32,
+}
+
+/// What `cam.move` returns: the setup's operations in their new order.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CamMoved {
+    pub setup: u64,
+    pub operations: Vec<u64>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
 }
 
 /// What `cam.operation` returns.

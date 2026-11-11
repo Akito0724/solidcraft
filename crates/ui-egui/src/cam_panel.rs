@@ -49,8 +49,17 @@ pub struct CamPanel {
     /// Index into the tool library.
     pub tool: usize,
     pub side: usize,
+    /// The operation the form changes (`None`: the form adds one).
+    pub editing: Option<u64>,
     /// Empty: the operation's default depth.
     pub depth: String,
+    // Cutting data; empty: the material's starting values (or the operation's own, when changing one).
+    pub rpm: String,
+    pub feed: String,
+    pub plunge: String,
+    pub stepdown: String,
+    /// Percent of the tool's diameter.
+    pub stepover: String,
     pub tabs: String,
     pub tab_width: String,
     pub tab_height: String,
@@ -94,7 +103,13 @@ impl Default for CamPanel {
             kind: 2,
             tool: 0,
             side: 0,
+            editing: None,
             depth: String::new(),
+            rpm: String::new(),
+            feed: String::new(),
+            plunge: String::new(),
+            stepdown: String::new(),
+            stepover: String::new(),
             tabs: "4".into(),
             tab_width: "6".into(),
             tab_height: "2".into(),
@@ -115,6 +130,13 @@ enum Action {
     Delete(u64),
     DeleteTool(u32),
     AddOperation,
+    /// Load an operation into the form to change it.
+    Edit(Value),
+    /// Leave the form's change of an operation.
+    StopEditing,
+    /// The operation being changed back to the material's starting cutting data.
+    ResetCutting,
+    Move(u64, i32),
     Export,
 }
 
@@ -159,6 +181,38 @@ impl CamPanel {
         Some(lines)
     }
 
+    /// Fill the form from an operation (`cam.generate`'s summary of it) to change it.
+    fn load(&mut self, op: &Value, tools: &[Value]) {
+        let num = |v: &Value| v.as_f64().map(|x| format!("{}", (x * 1000.0).round() / 1000.0)).unwrap_or_default();
+        self.editing = op["id"].as_u64();
+        self.kind = KINDS.iter().position(|k| Some(*k) == op["kind"].as_str()).unwrap_or(self.kind);
+        self.tool = tools.iter().position(|t| t["number"] == op["tool"]).unwrap_or(self.tool);
+        self.depth = num(&op["depth"]);
+        self.side = SIDES.iter().position(|k| Some(*k) == op["side"].as_str()).unwrap_or(0);
+        if op["tabs"].is_object() {
+            self.tabs = text(&op["tabs"]["count"]);
+            self.tab_width = num(&op["tabs"]["width"]);
+            self.tab_height = num(&op["tabs"]["height"]);
+        } else if op["kind"] == "contour" {
+            self.tabs = "0".into();
+        }
+        self.peck = num(&op["peck"]);
+        let c = &op["cutting"];
+        self.rpm = num(&c["spindle_rpm"]);
+        self.feed = num(&c["feed"]);
+        self.plunge = num(&c["plunge_feed"]);
+        self.stepdown = num(&c["stepdown"]);
+        self.stepover = c["stepover"].as_f64().map(|x| format!("{}", (x * 1000.0).round() / 10.0)).unwrap_or_default();
+    }
+
+    /// Back to adding operations, with the cutting data left to the material.
+    fn stop_editing(&mut self) {
+        self.editing = None;
+        for f in [&mut self.rpm, &mut self.feed, &mut self.plunge, &mut self.stepdown, &mut self.stepover, &mut self.depth] {
+            f.clear();
+        }
+    }
+
     fn tool_params(&self) -> Result<Value, String> {
         let n = self.tool_number.trim().parse::<u32>().map_err(|_| tr("cam.panel.bad_tool_number").to_string())?;
         let d = number(&self.tool_diameter).ok_or_else(|| tr("cam.panel.bad_diameter").to_string())?;
@@ -191,20 +245,35 @@ impl CamPanel {
     fn operation_params(&self, setup: u64, tool: u32, selection: &[Sel]) -> Result<Value, String> {
         let kind = KINDS.get(self.kind).copied().unwrap_or("contour");
         let mut p = json!({"setup": setup, "type": kind, "tool": tool});
+        // Changing an operation keeps its faces and edges unless others are selected.
+        let changing = self.editing.is_some();
+        if let Some(id) = self.editing {
+            p["id"] = json!(id);
+        }
         if let Some(d) = number(&self.depth) {
             p["depth"] = json!(d);
+        }
+        for (key, text, scale) in [
+            ("spindle_rpm", &self.rpm, 1.0),
+            ("feed", &self.feed, 1.0),
+            ("plunge_feed", &self.plunge, 1.0),
+            ("stepdown", &self.stepdown, 1.0),
+            ("stepover", &self.stepover, 0.01),
+        ] {
+            if let Some(v) = number(text) {
+                p[key] = json!(v * scale);
+            }
         }
         let face = selection.iter().find_map(|s| match s {
             Sel::Face { body, point, .. } => Some(json!({"at": [point.x, point.y, point.z], "body": body})),
             _ => None,
         });
         match kind {
-            "pocket" | "contour" => {
-                let Some(face) = face else {
-                    return Err(tr(if kind == "pocket" { "cam.panel.pick_floor" } else { "cam.panel.pick_face" }).to_string());
-                };
-                p["face"] = face;
-            }
+            "pocket" | "contour" => match face {
+                Some(face) => p["face"] = face,
+                None if changing => {}
+                None => return Err(tr(if kind == "pocket" { "cam.panel.pick_floor" } else { "cam.panel.pick_face" }).to_string()),
+            },
             "drill" => {
                 let edges: Vec<Value> = selection
                     .iter()
@@ -213,10 +282,11 @@ impl CamPanel {
                         _ => None,
                     })
                     .collect();
-                if edges.is_empty() {
+                if !edges.is_empty() {
+                    p["edges"] = json!(edges);
+                } else if !changing {
                     return Err(tr("cam.panel.pick_edges").to_string());
                 }
-                p["edges"] = json!(edges);
                 if let Some(v) = number(&self.peck) {
                     p["peck"] = json!(v);
                 }
@@ -324,6 +394,15 @@ pub fn paint_toolpaths(app: &mut SolveApp, painter: &egui::Painter, proj: &crate
             painter.extend(crate::ui_kit::dashed_line(&[sa, sb], painter.clip_rect(), rapid, 4.0, 3.0));
         }
     }
+}
+
+/// The name of operation `id` of a setup (`cam.generate`'s summary), in the interface language.
+fn s_ops_name(setup: Option<&Value>, id: u64) -> String {
+    setup
+        .and_then(|s| s["operations"].as_array())
+        .and_then(|ops| ops.iter().find(|o| o["id"].as_u64() == Some(id)))
+        .map(|o| op_name(&text(&o["name"])))
+        .unwrap_or_default()
 }
 
 /// An operation's generated name (`contour 2`) in the interface language; others as they are.
@@ -599,6 +678,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if !setups.iter().any(|s| s["id"].as_u64() == d.setup) {
         d.setup = setups.first().and_then(|s| s["id"].as_u64());
     }
+    // The operation being changed is gone (undone, deleted elsewhere) or in another setup.
+    if let Some(id) = d.editing {
+        let here = setups.iter().filter(|s| s["id"].as_u64() == d.setup).flat_map(|s| s["operations"].as_array().into_iter().flatten());
+        if !here.clone().any(|o| o["id"].as_u64() == Some(id)) {
+            d.stop_editing();
+        }
+    }
     let selection = app.session.selection.clone();
     let faces = selection.iter().filter(|s| matches!(s, Sel::Face { .. })).count();
     let edges = selection.iter().filter(|s| matches!(s, Sel::Edge { .. })).count();
@@ -679,17 +765,27 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             let picked = setups.iter().find(|s| s["id"].as_u64() == d.setup);
             let mut total = 0.0;
             if let Some(s) = picked {
-                egui::Grid::new("sc_cam_ops").num_columns(4).striped(true).spacing([12.0, 4.0]).show(ui, |ui| {
+                egui::Grid::new("sc_cam_ops").num_columns(6).striped(true).spacing([10.0, 4.0]).show(ui, |ui| {
                     for op in s["operations"].as_array().into_iter().flatten() {
                         let id = op["id"].as_u64().unwrap_or(0);
                         let minutes = op["minutes"].as_f64().unwrap_or(0.0);
                         total += minutes;
-                        ui.label(op_name(&text(&op["name"])));
+                        // A click loads it into the form below, to change it.
+                        let name = op_name(&text(&op["name"]));
+                        if crate::ui_kit::list_picker(ui, &format!("cam_op_{id}"), &name, d.editing == Some(id)).clicked() {
+                            action = Some(if d.editing == Some(id) { Action::StopEditing } else { Action::Edit(op.clone()) });
+                        }
                         ui.label(format!("T{}", text(&op["tool"])));
                         match op["error"].as_str() {
                             Some(e) => ui.label(RichText::new(cam_text(e)).color(t.error)),
                             None => ui.label(RichText::new(format!("{minutes:.1} {}", tr_label("min"))).color(t.text_dim)),
                         };
+                        if crate::ui_kit::button(ui, format!("↑ #{id}"), crate::ui_kit::Button::Small).clicked() {
+                            action = Some(Action::Move(id, -1));
+                        }
+                        if crate::ui_kit::button(ui, format!("↓ #{id}"), crate::ui_kit::Button::Small).clicked() {
+                            action = Some(Action::Move(id, 1));
+                        }
                         if crate::ui_kit::button(ui, format!("{} #{id}", tr_label("Delete")), crate::ui_kit::Button::Small).clicked() {
                             action = Some(Action::Delete(id));
                         }
@@ -706,6 +802,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 let tool_refs: Vec<&str> = tool_labels.iter().map(String::as_str).collect();
                 if d.tool >= tool_refs.len() {
                     d.tool = 0;
+                }
+                if let Some(id) = d.editing {
+                    let name = s_ops_name(picked, id);
+                    ui.label(RichText::new(solidcraft_ui_text::format("cam.panel.editing", &[("name", &name)])).strong());
                 }
                 ui.horizontal_wrapped(|ui| {
                     crate::ui_kit::row(ui, "Type", |ui| crate::ui_kit::dropdown(ui, "cam_op_kind", &mut d.kind, &KIND_LABELS));
@@ -724,6 +824,19 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 if kind == "drill" {
                     ui.horizontal_wrapped(|ui| field(ui, "Peck", &mut d.peck, 48.0));
                 }
+                // Cutting data: empty fields take the material's starting values.
+                ui.horizontal_wrapped(|ui| {
+                    field(ui, "Spindle (rpm)", &mut d.rpm, 64.0);
+                    field(ui, "Feed (mm/min)", &mut d.feed, 56.0);
+                    field(ui, "Plunge (mm/min)", &mut d.plunge, 56.0);
+                });
+                ui.horizontal_wrapped(|ui| {
+                    field(ui, "Depth per pass", &mut d.stepdown, 48.0);
+                    if kind != "drill" {
+                        field(ui, "Stepover (%)", &mut d.stepover, 48.0);
+                    }
+                });
+                ui.label(RichText::new(tr("cam.panel.cutting_hint")).small().color(t.text_dim));
                 let hint = match kind {
                     "pocket" => tr("cam.panel.pick_floor"),
                     "contour" => tr("cam.panel.pick_face"),
@@ -736,9 +849,20 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         .small()
                         .color(t.text_dim),
                 );
-                if crate::ui_kit::button(ui, "Add Operation", crate::ui_kit::Button::Primary).clicked() {
-                    action = Some(Action::AddOperation);
-                }
+                ui.horizontal(|ui| {
+                    let label = if d.editing.is_some() { "Update Operation" } else { "Add Operation" };
+                    if crate::ui_kit::button(ui, label, crate::ui_kit::Button::Primary).clicked() {
+                        action = Some(Action::AddOperation);
+                    }
+                    if d.editing.is_some() {
+                        if crate::ui_kit::button(ui, "Starting values", crate::ui_kit::Button::Normal).clicked() {
+                            action = Some(Action::ResetCutting);
+                        }
+                        if crate::ui_kit::button(ui, "Cancel", crate::ui_kit::Button::Normal).clicked() {
+                            action = Some(Action::StopEditing);
+                        }
+                    }
+                });
             } else if picked.is_some() {
                 ui.label(RichText::new(tr("cam.panel.add_a_tool")).color(t.text_dim));
             }
@@ -771,12 +895,39 @@ fn run(app: &mut SolveApp, d: &mut CamPanel, action: Action, tools: &[Value], se
             d.setup = v["id"].as_u64();
             v
         }),
-        Action::Delete(id) => app.run("cam.delete", json!({"id": id})),
+        Action::Delete(id) => {
+            if d.editing == Some(id) {
+                d.stop_editing();
+            }
+            app.run("cam.delete", json!({"id": id}))
+        }
+        Action::Edit(op) => {
+            d.load(&op, tools);
+            Ok(Value::Null)
+        }
+        Action::StopEditing => {
+            d.stop_editing();
+            Ok(Value::Null)
+        }
+        Action::ResetCutting => match d.editing {
+            Some(id) => app.run("cam.operation", json!({"id": id, "reset_cutting": true})).map(|v| {
+                d.load(&v["operation"], tools);
+                v
+            }),
+            None => Ok(Value::Null),
+        },
+        Action::Move(id, by) => app.run("cam.move", json!({"id": id, "by": by})),
         Action::DeleteTool(n) => app.run("cam.delete", json!({"tool": n})),
         Action::AddOperation => {
             let tool = tools.get(d.tool).and_then(|t| t["number"].as_u64()).and_then(|n| u32::try_from(n).ok());
             match (d.setup, tool) {
-                (Some(setup), Some(tool)) => d.operation_params(setup, tool, selection).and_then(|p| app.run("cam.operation", p)),
+                (Some(setup), Some(tool)) => d.operation_params(setup, tool, selection).and_then(|p| app.run("cam.operation", p)).map(|v| {
+                    // A change stays loaded (with what the engine made of it); an addition clears.
+                    if d.editing.is_some() {
+                        d.load(&v["operation"], tools);
+                    }
+                    v
+                }),
                 _ => Err(tr("cam.panel.add_a_tool").to_string()),
             }
         }
@@ -968,6 +1119,55 @@ mod tests {
         h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
         assert!(super::switch_workspace(&mut h.app, "manufacture").is_err());
         assert!(!super::workspace_active(&h.app));
+    }
+
+    #[test]
+    fn an_operation_is_changed_reordered_and_given_back_its_starting_cutting_data_from_the_window() {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length": 60, "width": 40, "height": 8})).unwrap();
+        h.app.run("cam.tool", json!({"number": 1, "diameter": 3.175})).unwrap();
+        h.app.run("cam.setup", json!({})).unwrap();
+        let face = h.app.run("cam.face", json!({"tool": 1})).unwrap()["operation"]["id"].as_u64().unwrap();
+        let state = crate::open_meshing::session_world(&h.app.session);
+        let body = state.bodies.first().unwrap();
+        let faces = body.body.faces(0.1).unwrap();
+        let top = faces.iter().filter(|f| f.plane_normal.is_some()).max_by(|a, b| a.centroid.z.total_cmp(&b.centroid.z)).unwrap();
+        let at = [top.centroid.x, top.centroid.y, top.centroid.z];
+        let contour = h.app.run("cam.contour", json!({"tool": 1, "face": {"at": at}})).unwrap()["operation"]["id"].as_u64().unwrap();
+        h.step(&json!({"start": "cam.generate"})).unwrap();
+        h.frames(2);
+        // Pick the contour from the list: the form takes its values.
+        h.step(&json!({"widget": "Contour 2"})).unwrap();
+        h.frames(2);
+        let d = h.app.machining.as_ref().unwrap();
+        assert_eq!(d.editing, Some(contour));
+        assert_eq!(d.kind, 2);
+        assert!(!d.stepdown.is_empty(), "the cutting data it runs with is shown");
+        // A shallower pass, with nothing selected: the face is kept.
+        h.app.session.selection.clear();
+        h.app.machining.as_mut().unwrap().stepdown = "0.5".into();
+        h.frames(2);
+        h.step(&json!({"widget": "Update Operation"})).unwrap();
+        let cam = h.app.session.execute("cam.generate", &json!({})).unwrap();
+        let ops = cam["setups"][0]["operations"].clone();
+        assert_eq!(ops.as_array().map(Vec::len), Some(2), "{cam}");
+        assert_eq!(ops[1]["cutting"]["stepdown"], 0.5, "{:?}", h.app.machining.as_ref().unwrap().error);
+        assert_eq!(ops[1]["custom_cutting"], true);
+        // Back to the starting values.
+        h.frames(2);
+        h.step(&json!({"widget": "Starting values"})).unwrap();
+        let cam = h.app.session.execute("cam.generate", &json!({})).unwrap();
+        assert!(cam["setups"][0]["operations"][1].get("custom_cutting").is_none(), "{cam}");
+        // The contour first.
+        h.frames(2);
+        h.step(&json!({"widget": format!("↑ #{contour}")})).unwrap();
+        let cam = h.app.session.execute("cam.generate", &json!({})).unwrap();
+        let order: Vec<u64> = cam["setups"][0]["operations"].as_array().unwrap().iter().filter_map(|o| o["id"].as_u64()).collect();
+        assert_eq!(order, [contour, face]);
+        // Cancel goes back to adding.
+        h.frames(2);
+        h.step(&json!({"widget": "Cancel"})).unwrap();
+        assert_eq!(h.app.machining.as_ref().unwrap().editing, None);
     }
 
     #[test]

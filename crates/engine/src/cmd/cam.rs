@@ -11,9 +11,9 @@ use super::CommandSpec;
 use super::design_link::absolute;
 use crate::params::bad;
 use crate::schema::cam::{
-    CamDeleteParams, CamDeleted, CamExportParams, CamExported, CamGenerateParams, CamGenerated, CamOpSummary, CamOperationParams, CamOperationResult,
-    CamPathLines, CamPickParam, CamProgram, CamSetupParams, CamSetupResult, CamSetupSummary, CamToolInfo, CamToolParams, CamToolpaths,
-    CamToolpathsParams, CamToolsResult,
+    CamCuttingInfo, CamDeleteParams, CamDeleted, CamExportParams, CamExported, CamGenerateParams, CamGenerated, CamMoveParams, CamMoved,
+    CamOpSummary, CamOperationParams, CamOperationResult, CamPathLines, CamPickParam, CamProgram, CamSetupParams, CamSetupResult, CamSetupSummary,
+    CamTabsInfo, CamToolInfo, CamToolParams, CamToolpaths, CamToolpathsParams, CamToolsResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -25,6 +25,7 @@ const DELETE_CONTRACT: TypedContract<CamDeleteParams> = TypedContract::new();
 const GENERATE_CONTRACT: TypedContract<CamGenerateParams> = TypedContract::new();
 const EXPORT_CONTRACT: TypedContract<CamExportParams> = TypedContract::new();
 const TOOLPATHS_CONTRACT: TypedContract<CamToolpathsParams> = TypedContract::new();
+const MOVE_CONTRACT: TypedContract<CamMoveParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("cam.tool", "Machining Tool", crate::checked!("cam.tool", tool_cmd))
@@ -74,6 +75,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<CamToolpaths>)
         .params("setup? (default the only one), step? (mm, default 1) → setup, stock [min, max], paths [{operation, name, tool, cuts [[[x,y,z]…]…], rapids [[from, to]…], error?}], truncated?; model coordinates"),
 
+    CommandSpec::new("cam.move", "Reorder Machining", crate::checked!("cam.move", move_cmd))
+        .icon("reorder")
+        .contract(&MOVE_CONTRACT)
+        .output(output_schema_for::<CamMoved>)
+        .params("id: an operation, by: places to move (negative: earlier) among its setup's operations → setup, operations (ids in order)"),
     CommandSpec::new("cam.face", "Face Milling", crate::checked!("cam.face", face_cmd))
         .icon("offset_face")
         .contract(&OPERATION_CONTRACT)
@@ -314,6 +320,21 @@ fn summary(op: &CamOperation, path: std::result::Result<&Toolpath, &String>) -> 
         }
         Err(e) => (0.0, 0.0, 0.0, Some(e.clone())),
     };
+    let cutting = path.ok().map(|t| CamCuttingInfo {
+        spindle_rpm: round(t.cutting.spindle_rpm, 1),
+        feed: round(t.cutting.feed, 1),
+        plunge_feed: round(t.cutting.plunge_feed, 1),
+        stepdown: round(t.cutting.stepdown, 3),
+        stepover: round(t.cutting.stepover, 3),
+    });
+    let (depth, side, tabs, peck) = match &op.spec {
+        OpSpec::Face { depth } => (*depth, None, None, None),
+        OpSpec::Pocket { .. } => (None, None, None, None),
+        OpSpec::Contour { side, depth, tabs, .. } => {
+            (*depth, Some(side_name(*side).to_string()), tabs.map(|t| CamTabsInfo { count: t.count, width: t.width, height: t.height }), None)
+        }
+        OpSpec::Drill { depth, peck, .. } => (*depth, None, None, *peck),
+    };
     CamOpSummary {
         id: op.id,
         name: op.name.clone(),
@@ -323,7 +344,50 @@ fn summary(op: &CamOperation, path: std::result::Result<&Toolpath, &String>) -> 
         rapid_mm: round(rapid, 1),
         minutes: round(minutes, 1),
         error,
+        cutting,
+        custom_cutting: op.cutting.is_some(),
+        depth,
+        side,
+        tabs,
+        peck,
     }
+}
+
+fn side_name(side: Side) -> &'static str {
+    match side {
+        Side::Outside => "outside",
+        Side::Inside => "inside",
+        Side::On => "on",
+    }
+}
+
+fn move_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.move";
+    let q: CamMoveParams = parse(cmd, p)?;
+    let Some(op) = s.doc.cam.operations.iter().find(|o| o.id == q.id).cloned() else {
+        return Err(bad(cmd, format!("there is no operation {}", q.id)));
+    };
+    // The places of the setup's operations in the list, and where this one is among them.
+    let places: Vec<usize> = s.doc.cam.operations.iter().enumerate().filter(|(_, o)| o.setup == op.setup).map(|(i, _)| i).collect();
+    let from = places.iter().position(|&i| s.doc.cam.operations.get(i).is_some_and(|o| o.id == q.id)).unwrap_or(0);
+    let last = places.len().saturating_sub(1);
+    let to = (i64::try_from(from).unwrap_or(0) + i64::from(q.by)).clamp(0, i64::try_from(last).unwrap_or(0));
+    let to = usize::try_from(to).unwrap_or(from);
+    if to != from {
+        let mut ops: Vec<CamOperation> = places.iter().filter_map(|&i| s.doc.cam.operations.get(i).cloned()).collect();
+        if from < ops.len() && to < ops.len() {
+            let moved = ops.remove(from);
+            ops.insert(to, moved);
+        }
+        let cam = &mut s.doc_mut().cam;
+        for (&i, o) in places.iter().zip(ops) {
+            if let Some(slot) = cam.operations.get_mut(i) {
+                *slot = o;
+            }
+        }
+    }
+    let operations = s.doc.cam.operations.iter().filter(|o| o.setup == op.setup).map(|o| o.id).collect();
+    reply(cmd, CamMoved { setup: op.setup, operations, param_warnings: Vec::new() })
 }
 
 /// `cam.operation` of one type: `type` is set (and must agree when given).
@@ -423,9 +487,10 @@ fn operation_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         None => return Err(bad(cmd, "`type` is required for a new operation")),
     };
     let overrides = [q.spindle_rpm, q.feed, q.plunge_feed, q.stepdown, q.stepover];
+    let kept = if q.reset_cutting == Some(true) { None } else { existing.as_ref().and_then(|o| o.cutting) };
     let cutting = if overrides.iter().any(Option::is_some) {
         let material = s.doc.cam.setup(setup_id).map_or(Material::Wood, |x| x.material);
-        let base = existing.as_ref().and_then(|o| o.cutting).unwrap_or_else(|| {
+        let base = kept.unwrap_or_else(|| {
             s.doc.cam.tool(tool).map_or(Cutting { spindle_rpm: 10_000.0, feed: 500.0, plunge_feed: 150.0, stepdown: 1.0, stepover: 0.4 }, |t| {
                 Cutting::starting(material, t)
             })
@@ -438,7 +503,7 @@ fn operation_cmd(s: &mut Session, p: &Value) -> Result<Value> {
             stepover: q.stepover.unwrap_or(base.stepover),
         })
     } else {
-        existing.as_ref().and_then(|o| o.cutting)
+        kept
     };
     let id = existing.as_ref().map_or_else(|| s.doc.cam.next_id(), |o| o.id);
     let name = match q.name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
@@ -737,6 +802,40 @@ mod tests {
         let high = cuts.iter().map(|p| p[2]).fold(f64::MIN, f64::max);
         assert!((high - 11.5).abs() < 1e-6, "{high}");
         assert!(s.execute("cam.toolpaths", &json!({"step": 0})).is_err());
+    }
+
+    #[test]
+    fn operations_report_their_settings_move_and_go_back_to_the_starting_cutting_data() {
+        let mut s = block();
+        s.execute("cam.tool", &json!({"number": 1, "diameter": 3.175, "flute_length": 20})).unwrap();
+        s.execute("cam.setup", &json!({})).unwrap();
+        let face = s.execute("cam.face", &json!({"tool": 1})).unwrap()["operation"]["id"].as_u64().unwrap();
+        let contour = s
+            .execute(
+                "cam.contour",
+                &json!({"tool": 1, "face": {"at": [10, 10, 10]}, "side": "outside", "tabs": {"count": 4, "width": 6, "height": 2}, "stepdown": 0.8}),
+            )
+            .unwrap()["operation"]
+            .clone();
+        assert_eq!(contour["side"], "outside");
+        assert_eq!(contour["tabs"]["count"], 4);
+        assert_eq!(contour["cutting"]["stepdown"], 0.8);
+        assert_eq!(contour["custom_cutting"], true);
+        let id = contour["id"].as_u64().unwrap();
+        // Back to the starting values, keeping the rest.
+        let reset = s.execute("cam.operation", &json!({"id": id, "reset_cutting": true})).unwrap()["operation"].clone();
+        assert!(reset.get("custom_cutting").is_none(), "{reset}");
+        assert_ne!(reset["cutting"]["stepdown"], 0.8);
+        assert_eq!(reset["tabs"]["count"], 4);
+        // The contour goes first, then back.
+        let moved = s.execute("cam.move", &json!({"id": id, "by": -1})).unwrap();
+        assert_eq!(moved["operations"], json!([id, face]));
+        let moved = s.execute("cam.move", &json!({"id": id, "by": 5})).unwrap();
+        assert_eq!(moved["operations"], json!([face, id]), "it stops at the end");
+        assert!(s.execute("cam.move", &json!({"id": 999, "by": 1})).is_err());
+        s.execute("edit.undo", &json!({})).unwrap();
+        let order: Vec<u64> = s.doc.cam.operations.iter().map(|o| o.id).collect();
+        assert_eq!(order, [id, face], "a move is one undo step");
     }
 
     #[test]

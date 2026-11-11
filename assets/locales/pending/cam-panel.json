@@ -103,7 +103,16 @@
     "ui.tab_manufacture": "التصنيع",
     "ui.heading_2d_milling": "تفريز ثنائي الأبعاد",
     "cam.panel.finish_first": "أنهِ الرسم أو الأمر الحالي قبل الدخول إلى التصنيع.",
-    "ui.workspace_manufacture_tabs": "الإعداد · تفريز ثنائي الأبعاد · فحص · إخراج"
+    "ui.workspace_manufacture_tabs": "الإعداد · تفريز ثنائي الأبعاد · فحص · إخراج",
+    "Spindle (rpm)": "سرعة العمود (د/د)",
+    "Feed (mm/min)": "التغذية (مم/د)",
+    "Plunge (mm/min)": "الغطس (مم/د)",
+    "Depth per pass": "العمق لكل مرور",
+    "Stepover (%)": "الخطوة الجانبية (%)",
+    "Update Operation": "تحديث العملية",
+    "Starting values": "القيم الابتدائية",
+    "cam.panel.cutting_hint": "الحقول الفارغة تأخذ القيم الابتدائية للمادة. الخطوة الجانبية نسبة مئوية من قطر الأداة.",
+    "cam.panel.editing": "تعديل {name}: اختره مرة أخرى أو ألغِ لإضافة عملية جديدة."
   },
   "en": {
     "Machining": "Machining",
@@ -209,7 +218,16 @@
     "ui.tab_manufacture": "Manufacture",
     "ui.heading_2d_milling": "2D MILLING",
     "cam.panel.finish_first": "Finish the current sketch or command before entering Manufacture.",
-    "ui.workspace_manufacture_tabs": "Setup · 2D Milling · Check · Output"
+    "ui.workspace_manufacture_tabs": "Setup · 2D Milling · Check · Output",
+    "Spindle (rpm)": "Spindle (rpm)",
+    "Feed (mm/min)": "Feed (mm/min)",
+    "Plunge (mm/min)": "Plunge (mm/min)",
+    "Depth per pass": "Depth per pass",
+    "Stepover (%)": "Stepover (%)",
+    "Update Operation": "Update Operation",
+    "Starting values": "Starting values",
+    "cam.panel.cutting_hint": "Empty fields take the material's starting values. Stepover is a percentage of the tool's diameter.",
+    "cam.panel.editing": "Changing {name}: pick it again or Cancel to add a new one."
   },
   "he": {
     "Machining": "עיבוד",
@@ -315,7 +333,16 @@
     "ui.tab_manufacture": "ייצור",
     "ui.heading_2d_milling": "כרסום דו־ממדי",
     "cam.panel.finish_first": "סיימו את הסקיצה או הפקודה הנוכחית לפני המעבר לייצור.",
-    "ui.workspace_manufacture_tabs": "הגדרה · כרסום דו־ממדי · בדיקה · פלט"
+    "ui.workspace_manufacture_tabs": "הגדרה · כרסום דו־ממדי · בדיקה · פלט",
+    "Spindle (rpm)": "מהירות ציר (סל״ד)",
+    "Feed (mm/min)": "הזנה (מ״מ/דק׳)",
+    "Plunge (mm/min)": "צלילה (מ״מ/דק׳)",
+    "Depth per pass": "עומק למעבר",
+    "Stepover (%)": "צעד צידי (%)",
+    "Update Operation": "עדכון פעולה",
+    "Starting values": "ערכי התחלה",
+    "cam.panel.cutting_hint": "שדות ריקים מקבלים את ערכי ההתחלה של החומר. הצעד הצידי הוא אחוז מקוטר הכלי.",
+    "cam.panel.editing": "משנים את {name}: בחרו בו שוב או בטלו כדי להוסיף חדשה."
   },
   "ja": {
     "Machining": "加工",
@@ -421,7 +448,16 @@
     "ui.tab_manufacture": "製造",
     "ui.heading_2d_milling": "2D加工",
     "cam.panel.finish_first": "製造に切り替える前に、編集中のスケッチやコマンドを終了してください。",
-    "ui.workspace_manufacture_tabs": "セットアップ · 2D加工 · 確認 · 出力"
+    "ui.workspace_manufacture_tabs": "セットアップ · 2D加工 · 確認 · 出力",
+    "Spindle (rpm)": "回転数 (rpm)",
+    "Feed (mm/min)": "送り (mm/min)",
+    "Plunge (mm/min)": "突っ込み (mm/min)",
+    "Depth per pass": "1段の深さ",
+    "Stepover (%)": "ステップオーバー (%)",
+    "Update Operation": "工程を更新",
+    "Starting values": "標準値に戻す",
+    "cam.panel.cutting_hint": "空欄は材料ごとの標準値になります。ステップオーバーは工具径に対する%です。",
+    "cam.panel.editing": "{name} を変更中（もう一度クリックするか「キャンセル」で新規追加に戻ります）"
   },
   "vi": {
     "Machining": "Gia công",
@@ -527,7 +563,16 @@
     "ui.tab_manufacture": "Sản xuất",
     "ui.heading_2d_milling": "PHAY 2D",
     "cam.panel.finish_first": "Hãy hoàn tất bản phác thảo hoặc lệnh hiện tại trước khi vào Sản xuất.",
-    "ui.workspace_manufacture_tabs": "Thiết lập · Phay 2D · Kiểm tra · Xuất"
+    "ui.workspace_manufacture_tabs": "Thiết lập · Phay 2D · Kiểm tra · Xuất",
+    "Spindle (rpm)": "Tốc độ trục (rpm)",
+    "Feed (mm/min)": "Tốc độ tiến (mm/phút)",
+    "Plunge (mm/min)": "Tốc độ xuống dao (mm/phút)",
+    "Depth per pass": "Sâu mỗi lớp",
+    "Stepover (%)": "Bước ngang (%)",
+    "Update Operation": "Cập nhật nguyên công",
+    "Starting values": "Giá trị ban đầu",
+    "cam.panel.cutting_hint": "Ô trống dùng giá trị ban đầu của vật liệu. Bước ngang tính theo % đường kính dao.",
+    "cam.panel.editing": "Đang sửa {name}: bấm lại hoặc Hủy để thêm mới."
   },
   "zh": {
     "Machining": "加工",
@@ -633,6 +678,15 @@
     "ui.tab_manufacture": "制造",
     "ui.heading_2d_milling": "2D 铣削",
     "cam.panel.finish_first": "进入制造前，请先完成当前的草图或命令。",
-    "ui.workspace_manufacture_tabs": "设置 · 2D 铣削 · 检查 · 输出"
+    "ui.workspace_manufacture_tabs": "设置 · 2D 铣削 · 检查 · 输出",
+    "Spindle (rpm)": "主轴转速 (rpm)",
+    "Feed (mm/min)": "进给 (mm/min)",
+    "Plunge (mm/min)": "下刀 (mm/min)",
+    "Depth per pass": "每层切深",
+    "Stepover (%)": "步距 (%)",
+    "Update Operation": "更新工序",
+    "Starting values": "恢复默认值",
+    "cam.panel.cutting_hint": "留空则使用材料的默认值。步距为刀具直径的百分比。",
+    "cam.panel.editing": "正在修改 {name}：再次点击或按“取消”返回新建。"
   }
 }
