@@ -368,8 +368,27 @@ impl Document {
         let setup = self.cam.setup(id)?;
         let body = st.body(&setup.body)?;
         let radius = (path.tool.diameter / 2.0 - 0.05).max(0.0);
+        // Every cut sampled at most 1 mm apart: a straight plunge is a single move.
         let points = path.points(1.0);
-        let below: Vec<_> = points.iter().filter(|(p, rapid)| !rapid && p.z < plan.part_top - 1e-6).map(|(p, _)| *p).collect();
+        let mut below = Vec::new();
+        for pair in points.windows(2) {
+            let [(a, _), (b, rapid)] = pair else { continue };
+            if *rapid {
+                continue;
+            }
+            let d = ((b.x - a.x).powi(2) + (b.y - a.y).powi(2) + (b.z - a.z).powi(2)).sqrt();
+            let n = (d.ceil() as usize).clamp(1, 10_000);
+            for k in 1..=n {
+                let t = k as f64 / n as f64;
+                let p = solidcraft_cam::P3::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t);
+                if p.z < plan.part_top - 1e-6 {
+                    below.push(p);
+                }
+            }
+            if below.len() > 200_000 {
+                break;
+            }
+        }
         let stride = (below.len() * 9).div_ceil(GOUGE_PROBES).max(1);
         let ring: Vec<(f64, f64)> = std::iter::once((0.0, 0.0))
             .chain((0..8).map(|k| {
