@@ -4,53 +4,77 @@
     "cmd.cam_setup": "Machining Setup",
     "cmd.cam_operation": "Machining Operation",
     "cmd.cam_delete": "Delete Machining",
-    "cmd.cam_generate": "Generate Toolpaths",
+    "cmd.cam_generate": "Machining",
     "cmd.cam_export": "Export G-code",
-    "cmd.cam_toolpaths": "Show Toolpaths"
+    "cmd.cam_toolpaths": "Show Toolpaths",
+    "cmd.cam_face": "Face Milling",
+    "cmd.cam_pocket": "Pocket",
+    "cmd.cam_contour": "Contour",
+    "cmd.cam_drill": "Drilling"
   },
   "ja": {
     "cmd.cam_tool": "加工工具",
     "cmd.cam_setup": "加工セットアップ",
     "cmd.cam_operation": "加工工程",
     "cmd.cam_delete": "加工を削除",
-    "cmd.cam_generate": "ツールパスを生成",
+    "cmd.cam_generate": "加工ウィンドウ",
     "cmd.cam_export": "G-codeを書き出し",
-    "cmd.cam_toolpaths": "ツールパスを表示"
+    "cmd.cam_toolpaths": "ツールパスを表示",
+    "cmd.cam_face": "面削り",
+    "cmd.cam_pocket": "ポケット",
+    "cmd.cam_contour": "輪郭",
+    "cmd.cam_drill": "穴あけ"
   },
   "zh": {
     "cmd.cam_tool": "加工刀具",
     "cmd.cam_setup": "加工设置",
     "cmd.cam_operation": "加工工序",
     "cmd.cam_delete": "删除加工",
-    "cmd.cam_generate": "生成刀具路径",
+    "cmd.cam_generate": "加工窗口",
     "cmd.cam_export": "导出 G 代码",
-    "cmd.cam_toolpaths": "显示刀具路径"
+    "cmd.cam_toolpaths": "显示刀具路径",
+    "cmd.cam_face": "平面铣",
+    "cmd.cam_pocket": "型腔",
+    "cmd.cam_contour": "轮廓",
+    "cmd.cam_drill": "钻孔"
   },
   "vi": {
     "cmd.cam_tool": "Dao gia công",
     "cmd.cam_setup": "Thiết lập gia công",
     "cmd.cam_operation": "Nguyên công gia công",
     "cmd.cam_delete": "Xóa gia công",
-    "cmd.cam_generate": "Tạo đường chạy dao",
+    "cmd.cam_generate": "Cửa sổ gia công",
     "cmd.cam_export": "Xuất G-code",
-    "cmd.cam_toolpaths": "Hiện đường chạy dao"
+    "cmd.cam_toolpaths": "Hiện đường chạy dao",
+    "cmd.cam_face": "Phay mặt",
+    "cmd.cam_pocket": "Hốc",
+    "cmd.cam_contour": "Biên dạng",
+    "cmd.cam_drill": "Khoan"
   },
   "ar": {
     "cmd.cam_tool": "أداة التشغيل",
     "cmd.cam_setup": "إعداد التشغيل",
     "cmd.cam_operation": "عملية التشغيل",
     "cmd.cam_delete": "حذف التشغيل",
-    "cmd.cam_generate": "إنشاء مسارات الأداة",
+    "cmd.cam_generate": "نافذة التشغيل",
     "cmd.cam_export": "تصدير G-code",
-    "cmd.cam_toolpaths": "إظهار مسارات الأداة"
+    "cmd.cam_toolpaths": "إظهار مسارات الأداة",
+    "cmd.cam_face": "تسوية السطح",
+    "cmd.cam_pocket": "جيب",
+    "cmd.cam_contour": "محيط",
+    "cmd.cam_drill": "ثقب"
   },
   "he": {
     "cmd.cam_tool": "כלי עיבוד",
     "cmd.cam_setup": "הגדרת עיבוד",
     "cmd.cam_operation": "פעולת עיבוד",
     "cmd.cam_delete": "מחיקת עיבוד",
-    "cmd.cam_generate": "יצירת מסלולי כלי",
+    "cmd.cam_generate": "חלון עיבוד",
     "cmd.cam_export": "ייצוא G-code",
-    "cmd.cam_toolpaths": "הצגת מסלולי כלי"
+    "cmd.cam_toolpaths": "הצגת מסלולי כלי",
+    "cmd.cam_face": "יישור משטח",
+    "cmd.cam_pocket": "כיס",
+    "cmd.cam_contour": "מתאר",
+    "cmd.cam_drill": "קידוח"
   }
 }

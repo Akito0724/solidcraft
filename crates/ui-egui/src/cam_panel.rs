@@ -467,6 +467,39 @@ fn translate(text: &str) -> String {
     crate::i18n::tr_engine_error(text)
 }
 
+/// The Manufacture tab's buttons (`ui.start` of a machining command): open the window ready for
+/// what the button names. `false` for any other command.
+pub fn start(app: &mut SolveApp, id: &str) -> bool {
+    let kind = match id {
+        "cam.face" => Some(0),
+        "cam.pocket" => Some(1),
+        "cam.contour" => Some(2),
+        "cam.drill" => Some(3),
+        "cam.generate" | "cam.setup" | "cam.tool" | "cam.toolpaths" | "cam.export" | "cam.operation" => None,
+        _ => return false,
+    };
+    let was_open = app.machining.is_some();
+    open(app);
+    let Some(mut d) = app.machining.take() else { return true };
+    if let Some(k) = kind {
+        d.kind = k;
+    }
+    match id {
+        // Show Toolpaths turns them on, or off when the window already shows them.
+        "cam.toolpaths" => d.show_paths = !(was_open && d.show_paths),
+        "cam.export" => {
+            if d.setup.is_none() {
+                let generated = d.generated(app);
+                d.setup = generated["setups"].as_array().and_then(|s| s.first()).and_then(|s| s["id"].as_u64());
+            }
+            run(app, &mut d, Action::Export, &[], &[]);
+        }
+        _ => {}
+    }
+    app.machining = Some(d);
+    true
+}
+
 /// Open the window.
 pub fn open(app: &mut SolveApp) {
     if app.machining.is_none() {
@@ -838,6 +871,25 @@ mod tests {
         h.app.machining.as_mut().unwrap().show_paths = false;
         assert_eq!(super::scene_key(&h.app), None);
         assert_eq!(super::box_edges(solidcore_record::Vec3::new(0.0, 0.0, 0.0), solidcore_record::Vec3::new(1.0, 2.0, 3.0)).len(), 12);
+    }
+
+    #[test]
+    fn the_manufacture_tab_opens_the_window_ready_for_each_button() {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length": 60, "width": 40, "height": 8})).unwrap();
+        for (id, kind) in [("cam.face", 0), ("cam.pocket", 1), ("cam.contour", 2), ("cam.drill", 3)] {
+            h.app.machining = None;
+            h.step(&json!({"start": id})).unwrap();
+            assert_eq!(h.app.machining.as_ref().map(|d| d.kind), Some(kind), "{id}");
+        }
+        h.step(&json!({"start": "cam.toolpaths"})).unwrap();
+        assert!(!h.app.machining.as_ref().unwrap().show_paths, "pressed with the window showing them, it hides them");
+        h.step(&json!({"start": "cam.toolpaths"})).unwrap();
+        assert!(h.app.machining.as_ref().unwrap().show_paths);
+        assert!(!super::start(&mut h.app, "solid.box"));
+        let tabs = crate::workspace::visible_tabs(&h.app);
+        assert!(tabs.contains(&"MANUFACTURE"), "{tabs:?}");
+        assert_eq!(crate::workspace::tab_name("MANUFACTURE"), "Manufacture");
     }
 
     #[test]

@@ -2143,8 +2143,8 @@ impl SolveApp {
             bom_panel::open(self);
             return;
         }
-        if id == "cam.generate" {
-            cam_panel::open(self);
+        // The Manufacture tab's buttons open the Machining window, ready for what they name.
+        if cam_panel::start(self, id) {
             return;
         }
         // Inspect → Measure → Properties: the window, not a reply nobody sees (#8095).

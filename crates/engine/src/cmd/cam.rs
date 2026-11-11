@@ -28,7 +28,7 @@ const TOOLPATHS_CONTRACT: TypedContract<CamToolpathsParams> = TypedContract::new
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("cam.tool", "Machining Tool", crate::checked!("cam.tool", tool_cmd))
-        .icon("hole")
+        .icon("library")
         .contract(&TOOL_CONTRACT)
         .output(output_schema_for::<CamToolsResult>)
         .params("number: 1..99, diameter, flutes?, flute_length?, kind?: flat_endmill|drill, name? → tools; replaces the tool with that number"),
@@ -55,8 +55,8 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&DELETE_CONTRACT)
         .output(output_schema_for::<CamDeleted>)
         .params("id?: a setup (with its operations) or an operation, tool?: a tool no operation uses → ids, tool"),
-    CommandSpec::new("cam.generate", "Generate Toolpaths", crate::checked!("cam.generate", generate_cmd))
-        .icon("update")
+    CommandSpec::new("cam.generate", "Machining", crate::checked!("cam.generate", generate_cmd))
+        .icon("list")
         .noundo()
         .contract(&GENERATE_CONTRACT)
         .output(output_schema_for::<CamGenerated>)
@@ -68,11 +68,32 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<CamExported>)
         .params("path, setup? (default the only one), arcs?: bool (default true) → files [{path, tool, operations, minutes}]; one GRBL program per tool"),
     CommandSpec::new("cam.toolpaths", "Show Toolpaths", crate::checked!("cam.toolpaths", toolpaths_cmd))
-        .icon("update")
+        .icon("inspect")
         .noundo()
         .contract(&TOOLPATHS_CONTRACT)
         .output(output_schema_for::<CamToolpaths>)
         .params("setup? (default the only one), step? (mm, default 1) → setup, stock [min, max], paths [{operation, name, tool, cuts [[[x,y,z]…]…], rapids [[from, to]…], error?}], truncated?; model coordinates"),
+
+    CommandSpec::new("cam.face", "Face Milling", crate::checked!("cam.face", face_cmd))
+        .icon("offset_face")
+        .contract(&OPERATION_CONTRACT)
+        .output(output_schema_for::<CamOperationResult>)
+        .params("cam.operation with type face: setup?, tool, depth?, name?, cutting data? → operation, setup"),
+    CommandSpec::new("cam.pocket", "Pocket", crate::checked!("cam.pocket", pocket_cmd))
+        .icon("cut")
+        .contract(&OPERATION_CONTRACT)
+        .output(output_schema_for::<CamOperationResult>)
+        .params("cam.operation with type pocket: setup?, tool, face: {at, body?} (the floor), depth?, name?, cutting data? → operation, setup"),
+    CommandSpec::new("cam.contour", "Contour", crate::checked!("cam.contour", contour_cmd))
+        .icon("trace")
+        .contract(&OPERATION_CONTRACT)
+        .output(output_schema_for::<CamOperationResult>)
+        .params("cam.operation with type contour: setup?, tool, face: {at, body?}, side?, depth?, tabs?, name?, cutting data? → operation, setup"),
+    CommandSpec::new("cam.drill", "Drilling", crate::checked!("cam.drill", drill_cmd))
+        .icon("hole")
+        .contract(&OPERATION_CONTRACT)
+        .output(output_schema_for::<CamOperationResult>)
+        .params("cam.operation with type drill: setup?, tool, edges: [{at, body?}], depth?, peck?, name?, cutting data? → operation, setup"),
 ];
 
 /// Most points `cam.toolpaths` returns.
@@ -303,6 +324,37 @@ fn summary(op: &CamOperation, path: std::result::Result<&Toolpath, &String>) -> 
         minutes: round(minutes, 1),
         error,
     }
+}
+
+/// `cam.operation` of one type: `type` is set (and must agree when given).
+fn typed_operation(s: &mut Session, p: &Value, cmd: &str, kind: &str) -> Result<Value> {
+    let mut p = match p {
+        Value::Null => serde_json::json!({}),
+        p => p.clone(),
+    };
+    let Some(o) = p.as_object_mut() else { return Err(bad(cmd, "the parameters are an object")) };
+    match o.get("type").and_then(Value::as_str) {
+        Some(t) if t != kind => return Err(bad(cmd, format!("{cmd} makes a {kind} operation, not {t}"))),
+        _ => {}
+    }
+    o.insert("type".into(), Value::from(kind));
+    operation_cmd(s, &p)
+}
+
+fn face_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    typed_operation(s, p, "cam.face", "face")
+}
+
+fn pocket_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    typed_operation(s, p, "cam.pocket", "pocket")
+}
+
+fn contour_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    typed_operation(s, p, "cam.contour", "contour")
+}
+
+fn drill_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    typed_operation(s, p, "cam.drill", "drill")
 }
 
 fn operation_cmd(s: &mut Session, p: &Value) -> Result<Value> {
@@ -685,6 +737,19 @@ mod tests {
         let high = cuts.iter().map(|p| p[2]).fold(f64::MIN, f64::max);
         assert!((high - 11.5).abs() < 1e-6, "{high}");
         assert!(s.execute("cam.toolpaths", &json!({"step": 0})).is_err());
+    }
+
+    #[test]
+    fn the_typed_operation_commands_set_their_type() {
+        let mut s = block();
+        s.execute("cam.tool", &json!({"number": 1, "diameter": 3.175, "flute_length": 20})).unwrap();
+        s.execute("cam.setup", &json!({})).unwrap();
+        let face = s.execute("cam.face", &json!({"tool": 1})).unwrap();
+        assert_eq!(face["operation"]["kind"], "face");
+        let contour = s.execute("cam.contour", &json!({"tool": 1, "face": {"at": [10, 10, 10]}})).unwrap();
+        assert_eq!(contour["operation"]["kind"], "contour");
+        assert!(s.execute("cam.drill", &json!({"tool": 1, "type": "pocket"})).is_err(), "a different type is refused");
+        assert!(s.execute("cam.pocket", &json!({"tool": 1})).is_err(), "a pocket still needs its floor");
     }
 
     #[test]

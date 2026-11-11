@@ -1,6 +1,5 @@
 {
   "ar": {
-    "MACHINING": "التشغيل",
     "Machining": "التشغيل",
     "No tools yet": "لا توجد أدوات بعد",
     "Number": "الرقم",
@@ -91,10 +90,20 @@
     "cam.error.nothing_to_write": "لا توجد عمليات لكتابتها في {name}.",
     "cam.error.library_full": "مكتبة الأدوات ممتلئة.",
     "cam.error.too_many_setups": "الإعدادات كثيرة جدًا.",
-    "cam.error.too_many_operations": "العمليات كثيرة جدًا."
+    "cam.error.too_many_operations": "العمليات كثيرة جدًا.",
+    "help.cam.setup": "يفتح نافذة التشغيل لإنشاء إعداد: الجسم ومادته وأصل العمل والخامة حوله. أنشئه قبل إضافة العمليات.",
+    "help.cam.tool": "يفتح نافذة التشغيل لإضافة أداة قطع: رقمها وقطرها وطول حدها القاطع. أضف الفريزات والمثاقيب التي ستركّبها في عمود الدوران.",
+    "help.cam.face": "يسوّي أعلى الخامة حتى القطعة. استخدمه أولًا عندما تكون الخامة أسمك من القطعة.",
+    "help.cam.pocket": "يزيل المادة فوق وجه أرضية داخل حدوده. اختر أرضية التجويف في النموذج ثم أضفه.",
+    "help.cam.contour": "يقص حول محيط وجه، من الخارج أو الداخل أو عليه، مع ألسنة لتثبيت القطعة. استخدمه لقص القطعة من الخامة.",
+    "help.cam.drill": "يثقب الثقوب التي تختار حوافها الدائرية، مع الثقب المتقطع إن شئت. استخدمه لثقوب البراغي.",
+    "help.cam.toolpaths": "يُظهر مسارات الأداة والخامة للإعداد فوق النموذج أو يخفيها. استخدمه للتحقق من مسار القاطع قبل التصدير.",
+    "help.cam.export": "يكتب G-code للإعداد لـ GRBL، ملفًا لكل أداة. استخدمه عندما تبدو المسارات صحيحة، ثم افتح الملفات في برنامج تحكم الآلة.",
+    "ui.heading_manufacture": "التصنيع",
+    "ui.tab_manufacture": "التصنيع",
+    "ui.heading_2d_milling": "تفريز ثنائي الأبعاد"
   },
   "en": {
-    "MACHINING": "MACHINING",
     "Machining": "Machining",
     "No tools yet": "No tools yet",
     "Number": "Number",
@@ -185,10 +194,20 @@
     "cam.panel.bad_flute": "Type the flute length in mm, or leave it empty for four times the diameter.",
     "cam.setup_name": "Setup {n}",
     "cam.tool_name.endmill": "{d} mm {f}-flute end mill",
-    "cam.tool_name.drill": "{d} mm drill"
+    "cam.tool_name.drill": "{d} mm drill",
+    "help.cam.setup": "Opens the Machining window to make a setup: the body, its material, the work origin and the stock around it. Make one before adding operations.",
+    "help.cam.tool": "Opens the Machining window to add a cutter: its number, diameter and flute length. Add the end mills and drills you will put in the spindle.",
+    "help.cam.face": "Flattens the top of the stock down to the part. Use it first when the stock is thicker than the part.",
+    "help.cam.pocket": "Clears the material above a floor face, inside its outline. Select the floor of a recess in the model, then add it.",
+    "help.cam.contour": "Cuts around a face's outline, outside, inside or on it, with tabs to hold the part. Use it to cut a part out of the stock.",
+    "help.cam.drill": "Drills the holes whose round edges you select, with pecking if you like. Use it for screw holes.",
+    "help.cam.toolpaths": "Shows or hides the setup's toolpaths and stock over the model. Use it to check where the cutter goes before exporting.",
+    "help.cam.export": "Writes the setup's G-code for GRBL, one file per tool. Use it when the toolpaths look right, then open the files in your machine's control software.",
+    "ui.heading_manufacture": "MANUFACTURE",
+    "ui.tab_manufacture": "Manufacture",
+    "ui.heading_2d_milling": "2D MILLING"
   },
   "he": {
-    "MACHINING": "עיבוד",
     "Machining": "עיבוד",
     "No tools yet": "אין עדיין כלים",
     "Number": "מספר",
@@ -279,10 +298,20 @@
     "cam.error.nothing_to_write": "אין ב־{name} פעולות לכתיבה.",
     "cam.error.library_full": "ספריית הכלים מלאה.",
     "cam.error.too_many_setups": "יותר מדי הגדרות עיבוד.",
-    "cam.error.too_many_operations": "יותר מדי פעולות."
+    "cam.error.too_many_operations": "יותר מדי פעולות.",
+    "help.cam.setup": "פותח את חלון העיבוד ליצירת הגדרה: הגוף, החומר, ראשית העבודה וחומר הגלם סביבו. צרו אותה לפני הוספת פעולות.",
+    "help.cam.tool": "פותח את חלון העיבוד להוספת כלי חיתוך: מספר, קוטר ואורך להב. הוסיפו את הכרסומים והמקדחים שתכניסו לציר.",
+    "help.cam.face": "מיישר את ראש חומר הגלם עד לחלק. השתמשו בו ראשון כשחומר הגלם עבה מהחלק.",
+    "help.cam.pocket": "מסיר את החומר מעל פאת רצפה, בתוך המתאר שלה. בחרו את רצפת השקע במודל ואז הוסיפו.",
+    "help.cam.contour": "חותך סביב מתאר של פאה, מבחוץ, מבפנים או עליו, עם לשוניות שמחזיקות את החלק. השתמשו בו כדי לחתוך חלק מחומר הגלם.",
+    "help.cam.drill": "קודח את החורים שאת קצותיהם העגולים בחרתם, עם קידוח בשלבים אם תרצו. השתמשו בו לחורי ברגים.",
+    "help.cam.toolpaths": "מציג או מסתיר את מסלולי הכלי וחומר הגלם של ההגדרה מעל המודל. השתמשו בו כדי לבדוק לאן הכלי נע לפני הייצוא.",
+    "help.cam.export": "כותב את ה־G-code של ההגדרה ל־GRBL, קובץ לכל כלי. השתמשו בו כשמסלולי הכלי נראים נכון, ואז פתחו את הקבצים בתוכנת הבקרה של המכונה.",
+    "ui.heading_manufacture": "ייצור",
+    "ui.tab_manufacture": "ייצור",
+    "ui.heading_2d_milling": "כרסום דו־ממדי"
   },
   "ja": {
-    "MACHINING": "加工",
     "Machining": "加工",
     "No tools yet": "工具がまだありません",
     "Number": "番号",
@@ -373,10 +402,20 @@
     "cam.error.nothing_to_write": "{name}には書き出す工程がありません。",
     "cam.error.library_full": "工具ライブラリがいっぱいです。",
     "cam.error.too_many_setups": "セットアップが多すぎます。",
-    "cam.error.too_many_operations": "工程が多すぎます。"
+    "cam.error.too_many_operations": "工程が多すぎます。",
+    "help.cam.setup": "加工ウィンドウを開いてセットアップを作ります（加工するボディ、材料、原点、材料の余白）。工程を追加する前に作ってください。",
+    "help.cam.tool": "加工ウィンドウを開いて工具を追加します（番号・直径・刃長）。スピンドルに付けるエンドミルやドリルを登録してください。",
+    "help.cam.face": "材料の上面を部品の高さまで平らに削ります。材料が部品より厚いときに最初に使います。",
+    "help.cam.pocket": "選んだ底面の輪郭の内側を、底面の高さまで掘ります。モデルでへこみの底面を選んでから追加してください。",
+    "help.cam.contour": "選んだ面の外形に沿って、外側・内側・線上のいずれかを切ります。部品を押さえるタブも付けられます。材料から部品を切り抜くときに使います。",
+    "help.cam.drill": "選んだ丸いエッジの穴をドリルで開けます。ペック（少しずつ突く）も選べます。ネジ穴に使います。",
+    "help.cam.toolpaths": "セットアップのツールパスと材料の箱をモデルの上に表示・非表示します。書き出す前に、工具の通り道を確かめるのに使います。",
+    "help.cam.export": "セットアップのG-code（GRBL用）を工具ごとに1ファイルずつ書き出します。ツールパスを確認したら書き出して、制御ソフトで開いてください。",
+    "ui.heading_manufacture": "製造",
+    "ui.tab_manufacture": "製造",
+    "ui.heading_2d_milling": "2D加工"
   },
   "vi": {
-    "MACHINING": "GIA CÔNG",
     "Machining": "Gia công",
     "No tools yet": "Chưa có dao",
     "Number": "Số",
@@ -467,10 +506,20 @@
     "cam.error.nothing_to_write": "{name} không có nguyên công nào để ghi.",
     "cam.error.library_full": "Thư viện dao đã đầy.",
     "cam.error.too_many_setups": "Có quá nhiều thiết lập.",
-    "cam.error.too_many_operations": "Có quá nhiều nguyên công."
+    "cam.error.too_many_operations": "Có quá nhiều nguyên công.",
+    "help.cam.setup": "Mở cửa sổ Gia công để tạo thiết lập: thân, vật liệu, gốc phôi và phần dư quanh nó. Tạo trước khi thêm nguyên công.",
+    "help.cam.tool": "Mở cửa sổ Gia công để thêm dao: số, đường kính và chiều dài lưỡi. Thêm các dao phay và mũi khoan bạn sẽ lắp vào trục chính.",
+    "help.cam.face": "Phay phẳng mặt trên phôi xuống tới chi tiết. Dùng đầu tiên khi phôi dày hơn chi tiết.",
+    "help.cam.pocket": "Phay sạch vật liệu phía trên một mặt đáy, bên trong đường biên của nó. Chọn đáy hốc trong mô hình rồi thêm.",
+    "help.cam.contour": "Cắt quanh đường biên của một mặt, phía ngoài, trong hoặc trên đường, có cầu giữ chi tiết. Dùng để cắt rời chi tiết khỏi phôi.",
+    "help.cam.drill": "Khoan các lỗ có cạnh tròn bạn chọn, có thể khoan từng nhịp. Dùng cho lỗ vít.",
+    "help.cam.toolpaths": "Hiện hoặc ẩn đường chạy dao và phôi của thiết lập trên mô hình. Dùng để kiểm tra dao đi đâu trước khi xuất.",
+    "help.cam.export": "Ghi G-code của thiết lập cho GRBL, mỗi dao một tệp. Dùng khi đường chạy dao đã ổn, rồi mở tệp trong phần mềm điều khiển máy.",
+    "ui.heading_manufacture": "SẢN XUẤT",
+    "ui.tab_manufacture": "Sản xuất",
+    "ui.heading_2d_milling": "PHAY 2D"
   },
   "zh": {
-    "MACHINING": "加工",
     "Machining": "加工",
     "No tools yet": "还没有刀具",
     "Number": "编号",
@@ -561,6 +610,17 @@
     "cam.error.nothing_to_write": "{name}没有可写出的工序。",
     "cam.error.library_full": "刀库已满。",
     "cam.error.too_many_setups": "设置太多。",
-    "cam.error.too_many_operations": "工序太多。"
+    "cam.error.too_many_operations": "工序太多。",
+    "help.cam.setup": "打开加工窗口新建设置：要加工的实体、材料、工件原点和周围的毛坯。添加工序前先建一个。",
+    "help.cam.tool": "打开加工窗口添加刀具：编号、直径和刃长。添加要装在主轴上的立铣刀和钻头。",
+    "help.cam.face": "把毛坯顶面铣平到零件高度。毛坯比零件厚时先用它。",
+    "help.cam.pocket": "在所选底面的轮廓内铣到底面高度。先在模型中选择凹槽的底面再添加。",
+    "help.cam.contour": "沿所选面的外形在外侧、内侧或线上切割，可加连接桥固定零件。用于从毛坯上切下零件。",
+    "help.cam.drill": "钻出所选圆边对应的孔，可选啄钻。用于螺丝孔。",
+    "help.cam.toolpaths": "在模型上显示或隐藏设置的刀具路径和毛坯。导出前用来检查刀具走向。",
+    "help.cam.export": "为 GRBL 写出设置的 G 代码，每把刀一个文件。确认刀具路径后导出，再在机床控制软件中打开。",
+    "ui.heading_manufacture": "制造",
+    "ui.tab_manufacture": "制造",
+    "ui.heading_2d_milling": "2D 铣削"
   }
 }

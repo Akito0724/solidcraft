@@ -61,6 +61,7 @@ pub const TAB_NAMES: &[&str] = &[
     "FORM",
     "SHEET METAL",
     "WELDMENTS",
+    "MANUFACTURE",
     "ASSEMBLE",
     "INSERT",
     "INSPECT",

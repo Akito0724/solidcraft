@@ -185,7 +185,6 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "INSERT", panel: "2D", promoted: 2, ids: &["sketch.insert_dxf", "sketch.insert_svg"] },
     Section { tab: "INSERT", panel: "LIBRARY", promoted: 3, ids: &["parts.fastener", "parts.library", "parts.resize", "parts.insert"] },
     Section { tab: "INSERT", panel: "LINKS", promoted: 2, ids: &["component.update_links", "component.break_link"] },
-    Section { tab: "INSERT", panel: "MACHINING", promoted: 1, ids: &["cam.generate"] },
     Section { tab: "INSPECT", panel: "MEASURE", promoted: 3, ids: &["inspect.measure", "inspect.center_of_mass", "component.properties"] },
     Section { tab: "INSPECT", panel: "SECTION", promoted: 1, ids: &["inspect.section"] },
     Section {
@@ -326,6 +325,11 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "WELDMENTS", panel: "SKETCH", promoted: 1, ids: &["sketch.create"] },
     Section { tab: "WELDMENTS", panel: "CREATE", promoted: 1, ids: &["frame.member"] },
     Section { tab: "WELDMENTS", panel: "CONFIGURE", promoted: 2, ids: CONFIGURE },
+    // Manufacture: machining a part on a CNC router (setups, 2.5D operations, G-code).
+    Section { tab: "MANUFACTURE", panel: "SETUP", promoted: 2, ids: &["cam.setup", "cam.tool"] },
+    Section { tab: "MANUFACTURE", panel: "2D MILLING", promoted: 4, ids: &["cam.face", "cam.pocket", "cam.contour", "cam.drill"] },
+    Section { tab: "MANUFACTURE", panel: "CHECK", promoted: 2, ids: &["cam.generate", "cam.toolpaths"] },
+    Section { tab: "MANUFACTURE", panel: "OUTPUT", promoted: 1, ids: &["cam.export"] },
 ];
 
 // Migration data only: Render commands remain registered, but have no live ribbon sections.
@@ -626,8 +630,11 @@ pub struct SpecialtyTab {
     pub icon: &'static str,
 }
 
-pub const SPECIALTY_TABS: &[SpecialtyTab] =
-    &[SpecialtyTab { tab: "SHEET METAL", icon: "sheet" }, SpecialtyTab { tab: "WELDMENTS", icon: "frame_member" }];
+pub const SPECIALTY_TABS: &[SpecialtyTab] = &[
+    SpecialtyTab { tab: "SHEET METAL", icon: "sheet" },
+    SpecialtyTab { tab: "WELDMENTS", icon: "frame_member" },
+    SpecialtyTab { tab: "MANUFACTURE", icon: "cut" },
+];
 
 /// A tab's row in the toolbar menu: the icon of the command that leads the tab (Model › Create ›
 /// Extrude, Inspect › Measure, View › Views and so on).
@@ -963,7 +970,7 @@ mod tests {
     fn contextual_tabs_follow_the_active_body_and_allow_other_tabs() {
         let mut h = crate::scenario::Harness::new();
         let mut fresh = TABS.to_vec();
-        fresh.extend(["SHEET METAL", "WELDMENTS"]);
+        fresh.extend(["SHEET METAL", "WELDMENTS", "MANUFACTURE"]);
         assert_eq!(visible_tabs(&h.app), fresh, "SHEET METAL and WELDMENTS are reachable before any sheet body or member exists");
         h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
         assert_eq!(h.app.ui.tab, "SKETCH");
