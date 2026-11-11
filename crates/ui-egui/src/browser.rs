@@ -1435,6 +1435,13 @@ fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, collapsible: bool) {
     if crate::render_workspace::browser_mode(app, ui) {
         return;
     }
+    // Manufacture lists its setups, operations and tools instead of the model.
+    if crate::cam_panel::workspace_active(app) {
+        t.secondary_hline(ui.painter(), ui.max_rect().x_range(), ui.cursor().top() + 1.0, t.toolbar.lerp_to_gamma(t.border, 0.5));
+        ui.add_space(t.space_3);
+        crate::cam_panel::browser_tree(app, ui);
+        return;
+    }
     if !render {
         t.secondary_hline(ui.painter(), ui.max_rect().x_range(), ui.cursor().top() + 1.0, t.toolbar.lerp_to_gamma(t.border, 0.5));
         ui.add_space(t.space_3);
@@ -1449,7 +1456,9 @@ pub(crate) fn panel_contents(app: &mut SolveApp, ui: &mut egui::Ui) {
     if render {
         ui.ctx().data_mut(|data| data.insert_temp(egui::Id::unique("sc_compact_tree"), true));
     }
-    if !crate::render_workspace::browser_mode(app, ui) {
+    if crate::cam_panel::workspace_active(app) {
+        crate::cam_panel::browser_tree(app, ui);
+    } else if !crate::render_workspace::browser_mode(app, ui) {
         rows_contents(app, ui, true);
     }
     if render {

@@ -306,6 +306,10 @@ pub struct CamSetupSummary {
     /// `wood`, `acrylic` or `aluminum`.
     pub material: String,
     pub flipped: bool,
+    /// `top_center` or `top_corner`.
+    pub origin: String,
+    /// The stock beyond the part: on each side, above and below (mm).
+    pub margins: [f64; 3],
     /// The stock's size: X, Y, Z (mm).
     pub stock: [f64; 3],
     pub operations: Vec<CamOpSummary>,
@@ -382,6 +386,21 @@ pub struct CamPathLines {
     /// Why its toolpath can't be made, when it can't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// What `cam.preview` returns: the operation as `cam.operation` would make it, and its toolpath
+/// in model coordinates, without changing the design.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CamPreview {
+    pub operation: CamOpSummary,
+    pub setup: u64,
+    /// Runs of points the tool cuts along (model coordinates, mm).
+    pub cuts: Vec<Vec<[f64; 3]>>,
+    /// Rapid moves, from and to.
+    pub rapids: Vec<[[f64; 3]; 2]>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
 }
 
 /// A setup's toolpaths in machine coordinates, to play back against its stock.

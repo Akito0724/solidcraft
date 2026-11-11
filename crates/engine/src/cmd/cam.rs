@@ -12,8 +12,9 @@ use super::design_link::absolute;
 use crate::params::bad;
 use crate::schema::cam::{
     CamCuttingInfo, CamDeleteParams, CamDeleted, CamExportParams, CamExported, CamGenerateParams, CamGenerated, CamMoveParams, CamMoved,
-    CamOpSummary, CamOperationParams, CamOperationResult, CamPathLines, CamPickParam, CamProgram, CamSetupParams, CamSetupResult, CamSetupSummary,
-    CamSimSteps, CamSimulation, CamSimulationParams, CamTabsInfo, CamToolInfo, CamToolParams, CamToolpaths, CamToolpathsParams, CamToolsResult,
+    CamOpSummary, CamOperationParams, CamOperationResult, CamPathLines, CamPickParam, CamPreview, CamProgram, CamSetupParams, CamSetupResult,
+    CamSetupSummary, CamSimSteps, CamSimulation, CamSimulationParams, CamTabsInfo, CamToolInfo, CamToolParams, CamToolpaths, CamToolpathsParams,
+    CamToolsResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -81,6 +82,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&MOVE_CONTRACT)
         .output(output_schema_for::<CamMoved>)
         .params("id: an operation, by: places to move (negative: earlier) among its setup's operations → setup, operations (ids in order)"),
+    CommandSpec::new("cam.preview", "Preview Machining", crate::checked!("cam.preview", preview_cmd))
+        .icon("inspect")
+        .noundo()
+        .contract(&OPERATION_CONTRACT)
+        .output(output_schema_for::<CamPreview>)
+        .params("cam.operation's parameters → operation, setup, cuts, rapids (model coordinates); the design is not changed"),
     CommandSpec::new("cam.simulation", "Simulate Machining", crate::checked!("cam.simulation", simulation_cmd))
         .icon("play")
         .noundo()
@@ -434,6 +441,85 @@ fn drill_cmd(s: &mut Session, p: &Value) -> Result<Value> {
 fn operation_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "cam.operation";
     let q: CamOperationParams = parse(cmd, p)?;
+    let (op, setup_id) = build_operation(s, cmd, q)?;
+    let id = op.id;
+    let at = s.doc.cam.operations.iter().position(|o| o.id == id);
+    if at.is_none() && s.doc.cam.operations.len() >= MAX_ITEMS {
+        return Err(bad(cmd, "there are too many operations"));
+    }
+    let before = (*s.doc).clone();
+    {
+        let cam = &mut s.doc_mut().cam;
+        match at.and_then(|i| cam.operations.get_mut(i)) {
+            Some(slot) => *slot = op.clone(),
+            None => cam.operations.push(op.clone()),
+        }
+    }
+    let path = toolpath(s, id);
+    if let Err(why) = &path {
+        *s.doc_mut() = before;
+        return Err(bad(cmd, why.clone()));
+    }
+    reply(cmd, CamOperationResult { operation: summary(&op, path.as_ref()), setup: setup_id, param_warnings: Vec::new() })
+}
+
+/// The operation `cam.operation` would make, and its toolpath drawn in model coordinates: worked
+/// out on a copy of the design, which stays as it was.
+fn preview_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.preview";
+    let q: CamOperationParams = parse(cmd, p)?;
+    let s: &Session = s;
+    let (op, setup) = build_operation(s, cmd, q)?;
+    let mut doc = (*s.doc).clone();
+    match doc.cam.operations.iter_mut().find(|o| o.id == op.id) {
+        Some(slot) => *slot = op.clone(),
+        None => doc.cam.operations.push(op.clone()),
+    }
+    let st = s.model.state();
+    let plan = doc.cam_plan(&st, setup).map_err(|e| bad(cmd, e.to_string()))?;
+    let frame = plan.frame;
+    let path = plan
+        .jobs
+        .into_iter()
+        .find(|(o, _)| *o == op.id)
+        .map(|(_, j)| j)
+        .ok_or_else(|| format!("there is no operation {}", op.id))
+        .and_then(|j| j)
+        .and_then(|j| solidcraft_cam::generate(&j, &plan.clearance).map_err(|e| named(&op.name, &e)));
+    let model = |p: solidcraft_cam::P3| frame.to_model([p.x, p.y, p.z]).map(|v| round(v, 4));
+    let (mut cuts, mut rapids) = (Vec::new(), Vec::new());
+    if let Ok(t) = &path {
+        let mut last: Option<[f64; 3]> = None;
+        let mut run: Vec<[f64; 3]> = Vec::new();
+        for (p, rapid) in t.points(1.0).into_iter().take(MAX_POINTS) {
+            let p = model(p);
+            if rapid {
+                if run.len() > 1 {
+                    cuts.push(std::mem::take(&mut run));
+                }
+                run.clear();
+                if let Some(from) = last {
+                    rapids.push([from, p]);
+                }
+            } else {
+                if run.is_empty()
+                    && let Some(from) = last
+                {
+                    run.push(from);
+                }
+                run.push(p);
+            }
+            last = Some(p);
+        }
+        if run.len() > 1 {
+            cuts.push(run);
+        }
+    }
+    reply(cmd, CamPreview { operation: summary(&op, path.as_ref()), setup, cuts, rapids, param_warnings: Vec::new() })
+}
+
+/// The operation `q` makes (a new one, or `q.id` changed), checked but not yet in the design.
+fn build_operation(s: &Session, cmd: &str, q: CamOperationParams) -> Result<(CamOperation, u64)> {
     let existing = match q.id {
         Some(id) => Some(s.doc.cam.operations.iter().find(|o| o.id == id).cloned().ok_or_else(|| bad(cmd, format!("there is no operation {id}")))?),
         None => None,
@@ -520,25 +606,7 @@ fn operation_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         Some(n) => n.chars().take(80).collect(),
         None => existing.as_ref().map_or_else(|| format!("{} {}", kind_name(&spec), s.doc.cam.operations.len() + 1), |o| o.name.clone()),
     };
-    let op = CamOperation { id, name, setup: setup_id, tool, spec, cutting };
-    let at = s.doc.cam.operations.iter().position(|o| o.id == id);
-    if at.is_none() && s.doc.cam.operations.len() >= MAX_ITEMS {
-        return Err(bad(cmd, "there are too many operations"));
-    }
-    let before = (*s.doc).clone();
-    {
-        let cam = &mut s.doc_mut().cam;
-        match at.and_then(|i| cam.operations.get_mut(i)) {
-            Some(slot) => *slot = op.clone(),
-            None => cam.operations.push(op.clone()),
-        }
-    }
-    let path = toolpath(s, id);
-    if let Err(why) = &path {
-        *s.doc_mut() = before;
-        return Err(bad(cmd, why.clone()));
-    }
-    reply(cmd, CamOperationResult { operation: summary(&op, path.as_ref()), setup: setup_id, param_warnings: Vec::new() })
+    Ok((CamOperation { id, name, setup: setup_id, tool, spec, cutting }, setup_id))
 }
 
 fn delete_cmd(s: &mut Session, p: &Value) -> Result<Value> {
@@ -618,6 +686,12 @@ fn generate_cmd(s: &mut Session, p: &Value) -> Result<Value> {
                 body: x.body.clone(),
                 material: material_name(x.material).into(),
                 flipped: x.flipped,
+                origin: match x.origin {
+                    WorkOrigin::TopCenter => "top_center",
+                    WorkOrigin::TopCorner => "top_corner",
+                }
+                .into(),
+                margins: [x.margin.side, x.margin.top, x.margin.bottom],
                 stock,
                 operations,
                 error,
@@ -914,6 +988,29 @@ mod tests {
         assert_eq!(at(0.0, 0.0), 0.0, "the stock's top over the block stays");
         assert_eq!(at(31.5, 0.0), -11.0, "the slot around the block goes through");
         assert!(s.execute("cam.simulation", &json!({"step": 1000})).is_err());
+    }
+
+    #[test]
+    fn a_preview_shows_the_toolpath_and_leaves_the_design_alone() {
+        let mut s = block();
+        s.execute("cam.tool", &json!({"number": 1, "diameter": 3.175, "flute_length": 20})).unwrap();
+        s.execute("cam.setup", &json!({})).unwrap();
+        let count = s.doc.cam.operations.len();
+        let undo = s.undo.len();
+        let shown = s.execute("cam.preview", &json!({"type": "contour", "tool": 1, "face": {"at": [10, 10, 10]}, "stepdown": 2})).unwrap();
+        assert!(!shown["cuts"].as_array().unwrap().is_empty(), "{shown}");
+        assert_eq!(shown["operation"]["cutting"]["stepdown"], 2.0);
+        assert_eq!(s.doc.cam.operations.len(), count, "nothing is added");
+        assert_eq!(s.undo.len(), undo);
+        // A toolpath that can't be made says why, still without a change.
+        let deep = s.execute("cam.preview", &json!({"type": "contour", "tool": 1, "face": {"at": [10, 10, 10]}, "depth": 60})).unwrap();
+        assert!(deep["operation"]["error"].is_string(), "{deep}");
+        assert!(deep["cuts"].as_array().unwrap().is_empty());
+        // Changing an operation shows the change, and the operation itself stays.
+        let id = s.execute("cam.contour", &json!({"tool": 1, "face": {"at": [10, 10, 10]}})).unwrap()["operation"]["id"].as_u64().unwrap();
+        let changed = s.execute("cam.preview", &json!({"id": id, "stepdown": 0.5})).unwrap();
+        assert_eq!(changed["operation"]["cutting"]["stepdown"], 0.5);
+        assert!(s.doc.cam.operations.iter().find(|o| o.id == id).unwrap().cutting.is_none());
     }
 
     #[test]
