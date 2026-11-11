@@ -11,7 +11,8 @@
     "cmd.cam_pocket": "Pocket",
     "cmd.cam_contour": "Contour",
     "cmd.cam_drill": "Drilling",
-    "cmd.cam_move": "Reorder Machining"
+    "cmd.cam_move": "Reorder Machining",
+    "cmd.cam_simulation": "Simulate Machining"
   },
   "ja": {
     "cmd.cam_tool": "加工工具",
@@ -25,7 +26,8 @@
     "cmd.cam_pocket": "ポケット",
     "cmd.cam_contour": "輪郭",
     "cmd.cam_drill": "穴あけ",
-    "cmd.cam_move": "加工の順番を変更"
+    "cmd.cam_move": "加工の順番を変更",
+    "cmd.cam_simulation": "加工シミュレーション"
   },
   "zh": {
     "cmd.cam_tool": "加工刀具",
@@ -39,7 +41,8 @@
     "cmd.cam_pocket": "型腔",
     "cmd.cam_contour": "轮廓",
     "cmd.cam_drill": "钻孔",
-    "cmd.cam_move": "调整加工顺序"
+    "cmd.cam_move": "调整加工顺序",
+    "cmd.cam_simulation": "加工模拟"
   },
   "vi": {
     "cmd.cam_tool": "Dao gia công",
@@ -53,7 +56,8 @@
     "cmd.cam_pocket": "Hốc",
     "cmd.cam_contour": "Biên dạng",
     "cmd.cam_drill": "Khoan",
-    "cmd.cam_move": "Sắp xếp nguyên công"
+    "cmd.cam_move": "Sắp xếp nguyên công",
+    "cmd.cam_simulation": "Mô phỏng gia công"
   },
   "ar": {
     "cmd.cam_tool": "أداة التشغيل",
@@ -67,7 +71,8 @@
     "cmd.cam_pocket": "جيب",
     "cmd.cam_contour": "محيط",
     "cmd.cam_drill": "ثقب",
-    "cmd.cam_move": "إعادة ترتيب التشغيل"
+    "cmd.cam_move": "إعادة ترتيب التشغيل",
+    "cmd.cam_simulation": "محاكاة التشغيل"
   },
   "he": {
     "cmd.cam_tool": "כלי עיבוד",
@@ -81,6 +86,7 @@
     "cmd.cam_pocket": "כיס",
     "cmd.cam_contour": "מתאר",
     "cmd.cam_drill": "קידוח",
-    "cmd.cam_move": "סידור פעולות עיבוד"
+    "cmd.cam_move": "סידור פעולות עיבוד",
+    "cmd.cam_simulation": "הדמיית עיבוד"
   }
 }

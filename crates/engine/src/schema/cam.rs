@@ -384,6 +384,51 @@ pub struct CamPathLines {
     pub error: Option<String>,
 }
 
+/// A setup's toolpaths in machine coordinates, to play back against its stock.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CamSimulationParams {
+    /// Default: the only setup.
+    #[serde(default)]
+    pub setup: Option<u64>,
+    /// Longest straight piece an arc is played back as (mm). Default 0.5.
+    #[serde(default)]
+    pub step: Option<f64>,
+}
+
+/// One operation to play back: its cutter and its points, in machine coordinates.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CamSimSteps {
+    pub operation: u64,
+    pub name: String,
+    pub tool: u32,
+    /// The cutter's radius (mm).
+    pub radius: f64,
+    /// Each point as [x, y, z, rapid]: `rapid` is 1 when the move to it is a rapid, else 0.
+    pub points: Vec<[f64; 4]>,
+}
+
+/// What `cam.simulation` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CamSimulation {
+    pub setup: u64,
+    /// The work origin in model coordinates.
+    pub origin: [f64; 3],
+    /// The part is turned over (machine Y and Z are the model's −Y and −Z).
+    pub flipped: bool,
+    /// The stock's corners in machine coordinates (mm).
+    pub stock_min: [f64; 3],
+    pub stock_max: [f64; 3],
+    /// The operations that can be made, in the order they are cut.
+    pub operations: Vec<CamSimSteps>,
+    /// True when the points were cut short (very long toolpaths).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// What `cam.toolpaths` returns.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct CamToolpaths {

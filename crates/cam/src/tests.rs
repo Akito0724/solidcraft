@@ -247,3 +247,47 @@ fn a_toolpath_draws_as_points_with_its_arcs_in_short_pieces() {
     }
     assert!(t.points(f64::NAN).len() > 2, "a bad step still draws");
 }
+
+#[test]
+fn the_stock_is_cut_where_the_cutter_passes_and_nowhere_else() {
+    use crate::sim::{Playback, Stock, cut};
+    let mut stock = Stock::new([-10.0, -10.0, -5.0], [10.0, 10.0, 0.0], 0.25).unwrap();
+    assert!(stock.nx >= 80 && stock.ny >= 80);
+    // A 3 mm cutter along X at Z -2.
+    stock.sweep(P3::new(-5.0, 0.0, -2.0), P3::new(5.0, 0.0, -2.0), 1.5);
+    let at = |s: &Stock, x: f64, y: f64| {
+        let i = ((x - s.x0) / s.dx).round() as usize;
+        let j = ((y - s.y0) / s.dy).round() as usize;
+        s.column(i, j).unwrap().z
+    };
+    assert!((at(&stock, 0.0, 0.0) + 2.0).abs() < 1e-9);
+    assert!((at(&stock, 0.0, 1.2) + 2.0).abs() < 1e-9, "inside the cutter's width");
+    assert_eq!(at(&stock, 0.0, 3.0), 0.0, "outside it");
+    assert_eq!(at(&stock, 8.0, 0.0), 0.0, "past the end of the move");
+    // Never below the stock's bottom; nothing above its top.
+    stock.plunge(P3::new(0.0, 5.0, -50.0), 1.0);
+    assert_eq!(at(&stock, 0.0, 5.0), -5.0);
+    stock.plunge(P3::new(0.0, -5.0, 3.0), 1.0);
+    assert_eq!(at(&stock, 0.0, -5.0), 0.0);
+    // Removed volume ≈ a 10 × 3 mm slot (plus round ends) 2 mm deep, and the plunge.
+    let slot = 10.0 * 3.0 * 2.0 + std::f64::consts::PI * 1.5 * 1.5 * 2.0;
+    let hole = std::f64::consts::PI * 1.0 * 5.0;
+    assert!((stock.removed() - slot - hole).abs() < 0.15 * (slot + hole), "{}", stock.removed());
+    // A whole contour played back: the ring around the part goes to the bottom, the part stays.
+    let tool = Tool::endmill(1, 3.0, 2, 12.0);
+    let op =
+        ContourOp { profile: Loop::rectangle((-5.0, -5.0), (5.0, 5.0)), side: Side::Outside, depths: Depths { top: 0.0, bottom: -5.5 }, tabs: None };
+    let path = generate(&job("ring", Operation::Contour(op), tool), &Clearance::default()).unwrap();
+    let play = Playback::new(&path, 0.5);
+    let mut stock = Stock::new([-10.0, -10.0, -5.0], [10.0, 10.0, 0.0], 0.25).unwrap();
+    cut(&mut stock, play.radius, &play.points, 0, play.points.len());
+    assert_eq!(at(&stock, 0.0, 0.0), 0.0, "the part is untouched");
+    assert_eq!(at(&stock, 6.5, 0.0), -5.0, "the slot around it is through");
+    assert_eq!(at(&stock, 9.5, 9.5), 0.0, "the corner of the stock beyond the cutter stays");
+    // Bad blocks make no stock.
+    assert!(Stock::new([0.0; 3], [0.0; 3], 1.0).is_none());
+    assert!(Stock::new([0.0; 3], [f64::NAN, 1.0, 1.0], 1.0).is_none());
+    // A huge block is split into at most MAX_CELLS columns.
+    let big = Stock::new([0.0; 3], [5000.0, 5000.0, 10.0], 0.1).unwrap();
+    assert!(big.nx * big.ny <= crate::sim::MAX_CELLS);
+}

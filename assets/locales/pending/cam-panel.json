@@ -113,7 +113,12 @@
     "Starting values": "القيم الابتدائية",
     "cam.panel.cutting_hint": "الحقول الفارغة تأخذ القيم الابتدائية للمادة. الخطوة الجانبية نسبة مئوية من قطر الأداة.",
     "cam.panel.editing": "تعديل {name}: اختره مرة أخرى أو ألغِ لإضافة عملية جديدة.",
-    "Cutting data": "بيانات القطع"
+    "Cutting data": "بيانات القطع",
+    "Simulate": "محاكاة",
+    "To End": "إلى النهاية",
+    "Stop Simulation": "إيقاف المحاكاة",
+    "cam.panel.nothing_to_simulate": "لا شيء لمحاكاته: الإعداد بلا خامة أو بلا مسارات يمكن إنشاؤها.",
+    "help.cam.simulation": "يشغّل مسارات أداة الإعداد على الخامة ويعرض المادة وهي تُزال. استخدمه للتحقق من البقايا والقطع الخاطئ قبل التصدير."
   },
   "en": {
     "Machining": "Machining",
@@ -229,7 +234,12 @@
     "Starting values": "Starting values",
     "cam.panel.cutting_hint": "Empty fields take the material's starting values. Stepover is a percentage of the tool's diameter.",
     "cam.panel.editing": "Changing {name}: pick it again or Cancel to add a new one.",
-    "Cutting data": "Cutting data"
+    "Cutting data": "Cutting data",
+    "Simulate": "Simulate",
+    "To End": "To End",
+    "Stop Simulation": "Stop Simulation",
+    "cam.panel.nothing_to_simulate": "There is nothing to simulate: the setup has no stock or no toolpaths that can be made.",
+    "help.cam.simulation": "Plays the setup's toolpaths against its stock and shows the material being cut away. Use it to check for leftovers and cuts in the wrong place before exporting."
   },
   "he": {
     "Machining": "עיבוד",
@@ -345,7 +355,12 @@
     "Starting values": "ערכי התחלה",
     "cam.panel.cutting_hint": "שדות ריקים מקבלים את ערכי ההתחלה של החומר. הצעד הצידי הוא אחוז מקוטר הכלי.",
     "cam.panel.editing": "משנים את {name}: בחרו בו שוב או בטלו כדי להוסיף חדשה.",
-    "Cutting data": "נתוני חיתוך"
+    "Cutting data": "נתוני חיתוך",
+    "Simulate": "הדמיה",
+    "To End": "עד הסוף",
+    "Stop Simulation": "עצירת הדמיה",
+    "cam.panel.nothing_to_simulate": "אין מה להדמות: להגדרה אין חומר גלם או מסלולי כלי שאפשר ליצור.",
+    "help.cam.simulation": "מריץ את מסלולי הכלי של ההגדרה על חומר הגלם ומראה את החומר שמוסר. השתמשו בו כדי לבדוק שאריות וחיתוכים במקום הלא נכון לפני הייצוא."
   },
   "ja": {
     "Machining": "加工",
@@ -461,7 +476,12 @@
     "Starting values": "標準値に戻す",
     "cam.panel.cutting_hint": "空欄は材料ごとの標準値になります。ステップオーバーは工具径に対する%です。",
     "cam.panel.editing": "{name} を変更中（もう一度クリックするか「キャンセル」で新規追加に戻ります）",
-    "Cutting data": "切削条件"
+    "Cutting data": "切削条件",
+    "Simulate": "シミュレーション",
+    "To End": "最後まで",
+    "Stop Simulation": "シミュレーション終了",
+    "cam.panel.nothing_to_simulate": "シミュレーションするものがありません（材料がないか、作れるツールパスがありません）。",
+    "help.cam.simulation": "セットアップのツールパスを材料に対して再生し、削られていく様子を表示します。書き出す前に、削り残しや余計な削りがないか確かめるのに使います。"
   },
   "vi": {
     "Machining": "Gia công",
@@ -577,7 +597,12 @@
     "Starting values": "Giá trị ban đầu",
     "cam.panel.cutting_hint": "Ô trống dùng giá trị ban đầu của vật liệu. Bước ngang tính theo % đường kính dao.",
     "cam.panel.editing": "Đang sửa {name}: bấm lại hoặc Hủy để thêm mới.",
-    "Cutting data": "Thông số cắt"
+    "Cutting data": "Thông số cắt",
+    "Simulate": "Mô phỏng",
+    "To End": "Đến cuối",
+    "Stop Simulation": "Dừng mô phỏng",
+    "cam.panel.nothing_to_simulate": "Không có gì để mô phỏng: thiết lập không có phôi hoặc đường chạy dao nào tạo được.",
+    "help.cam.simulation": "Phát lại đường chạy dao của thiết lập trên phôi và hiện vật liệu bị cắt đi. Dùng để kiểm tra phần còn sót và chỗ cắt sai trước khi xuất."
   },
   "zh": {
     "Machining": "加工",
@@ -693,6 +718,11 @@
     "Starting values": "恢复默认值",
     "cam.panel.cutting_hint": "留空则使用材料的默认值。步距为刀具直径的百分比。",
     "cam.panel.editing": "正在修改 {name}：再次点击或按“取消”返回新建。",
-    "Cutting data": "切削参数"
+    "Cutting data": "切削参数",
+    "Simulate": "模拟",
+    "To End": "到结尾",
+    "Stop Simulation": "停止模拟",
+    "cam.panel.nothing_to_simulate": "没有可模拟的内容：此设置没有毛坯或可生成的刀具路径。",
+    "help.cam.simulation": "按设置的刀具路径在毛坯上回放，显示材料被切除的过程。导出前用来检查残留和错误切削。"
   }
 }

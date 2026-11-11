@@ -74,6 +74,8 @@ pub struct CamPanel {
     paths: Option<(u64, u64, PathLines)>,
     /// Counts the times `paths` was worked out, so the model scene draws the new lines.
     generation: u64,
+    /// The stock being cut along the toolpaths, while a simulation plays.
+    pub sim: Option<crate::cam_sim::Sim>,
 }
 
 /// A setup's toolpaths in model coordinates: cutting runs and rapid moves.
@@ -119,6 +121,7 @@ impl Default for CamPanel {
             show_paths: true,
             paths: None,
             generation: 0,
+            sim: None,
         }
     }
 }
@@ -138,6 +141,11 @@ enum Action {
     ResetCutting,
     Move(u64, i32),
     Export,
+    /// Start (or start again) playing the setup's toolpaths against its stock.
+    Simulate,
+    PlayPause,
+    ToEnd,
+    StopSimulation,
 }
 
 /// A number typed in a field: `None` when it is empty or not a finite number.
@@ -347,7 +355,9 @@ fn box_edges(a: Vec3, b: Vec3) -> Vec<[Vec3; 2]> {
 /// edges), while the window shows toolpaths. [`paint_toolpaths`] draws them all faintly on top,
 /// so what the model hides still shows through, dimmed.
 pub(crate) fn scene_lines(sc: &mut crate::gpu::GpuScene, app: &SolveApp) {
-    let Some((_, _, lines)) = app.machining.as_ref().filter(|d| d.show_paths).and_then(|d| d.paths.as_ref()) else { return };
+    let Some((_, _, lines)) = app.machining.as_ref().filter(|d| d.show_paths && d.sim.is_none()).and_then(|d| d.paths.as_ref()) else {
+        return;
+    };
     let t = Tokens::get();
     let up = [[0.0f32, 0.0, 1.0]; 2];
     let cut = sc.color(crate::viewport::c4(t.accent));
@@ -368,13 +378,23 @@ pub(crate) fn scene_lines(sc: &mut crate::gpu::GpuScene, app: &SolveApp) {
 
 /// What the model scene's lines depend on: `None` while no toolpaths are shown.
 pub(crate) fn scene_key(app: &SolveApp) -> Option<(u64, u64)> {
-    app.machining.as_ref().filter(|d| d.show_paths && d.paths.is_some()).map(|d| (d.generation, d.setup.unwrap_or(0)))
+    app.machining.as_ref().filter(|d| d.show_paths && d.paths.is_some() && d.sim.is_none()).map(|d| (d.generation, d.setup.unwrap_or(0)))
 }
 
 /// Draw the open window's toolpaths over the model: faintly, so the parts the model hides show
 /// through (the model scene draws the visible cuts solid, [`scene_lines`]), and rapids dashed.
 pub fn paint_toolpaths(app: &mut SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(mut d) = app.machining.take() else { return };
+    // A simulation playing shows the stock being cut instead of the lines; a change to the
+    // design or another setup picked ends it.
+    if d.sim.as_ref().is_some_and(|s| s.revision != app.session.revision || Some(s.setup) != d.setup) {
+        d.sim = None;
+    }
+    if let Some(sim) = d.sim.as_mut() {
+        crate::cam_sim::paint(sim, painter, proj);
+        app.machining = Some(d);
+        return;
+    }
     let lines = if d.show_paths { d.lines(app) } else { None };
     app.machining = Some(d);
     let Some(lines) = lines else { return };
@@ -604,7 +624,7 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
         "cam.pocket" => Some(1),
         "cam.contour" => Some(2),
         "cam.drill" => Some(3),
-        "cam.generate" | "cam.setup" | "cam.tool" | "cam.toolpaths" | "cam.export" | "cam.operation" => None,
+        "cam.generate" | "cam.setup" | "cam.tool" | "cam.toolpaths" | "cam.export" | "cam.operation" | "cam.simulation" => None,
         _ => return false,
     };
     let was_open = app.machining.is_some();
@@ -616,6 +636,13 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
     match id {
         // Show Toolpaths turns them on, or off when the window already shows them.
         "cam.toolpaths" => d.show_paths = !(was_open && d.show_paths),
+        "cam.simulation" => {
+            if d.setup.is_none() {
+                let generated = d.generated(app);
+                d.setup = generated["setups"].as_array().and_then(|s| s.first()).and_then(|s| s["id"].as_u64());
+            }
+            run(app, &mut d, Action::Simulate, &[], &[]);
+        }
         "cam.export" => {
             if d.setup.is_none() {
                 let generated = d.generated(app);
@@ -678,6 +705,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if !setups.iter().any(|s| s["id"].as_u64() == d.setup) {
         d.setup = setups.first().and_then(|s| s["id"].as_u64());
     }
+    // A simulation of an older design, or of another setup, ends.
+    if d.sim.as_ref().is_some_and(|s| s.revision != app.session.revision || Some(s.setup) != d.setup) {
+        d.sim = None;
+    }
     // The operation being changed is gone (undone, deleted elsewhere) or in another setup.
     if let Some(id) = d.editing {
         let here = setups.iter().filter(|s| s["id"].as_u64() == d.setup).flat_map(|s| s["operations"].as_array().into_iter().flatten());
@@ -698,6 +729,27 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     action = Some(Action::Export);
                 }
                 crate::ui_kit::checkbox(ui, tr_label("Show toolpaths"), &mut d.show_paths);
+            });
+            // Simulation: play the toolpaths against the stock.
+            ui.horizontal_wrapped(|ui| {
+                if crate::ui_kit::button(ui, "Simulate", crate::ui_kit::Button::Normal).clicked() {
+                    action = Some(Action::Simulate);
+                }
+                if let Some(sim) = d.sim.as_mut() {
+                    let label = if sim.playing && !sim.done() { "Pause" } else { "Play" };
+                    if crate::ui_kit::button(ui, label, crate::ui_kit::Button::Small).clicked() {
+                        action = Some(Action::PlayPause);
+                    }
+                    if crate::ui_kit::button(ui, "To End", crate::ui_kit::Button::Small).clicked() {
+                        action = Some(Action::ToEnd);
+                    }
+                    if crate::ui_kit::button(ui, "Stop Simulation", crate::ui_kit::Button::Small).clicked() {
+                        action = Some(Action::StopSimulation);
+                    }
+                    crate::ui_kit::dropdown(ui, "cam_sim_speed", &mut sim.speed, &crate::cam_sim::SPEED_LABELS);
+                    let (name, done) = sim.progress();
+                    ui.label(RichText::new(format!("{} · {:.0}%", op_name(&name), done * 100.0)).small().color(t.text_dim));
+                }
             });
             // Operations of the picked setup.
             heading(ui, "Operations");
@@ -922,6 +974,37 @@ fn run(app: &mut SolveApp, d: &mut CamPanel, action: Action, tools: &[Value], se
             None => Ok(Value::Null),
         },
         Action::Move(id, by) => app.run("cam.move", json!({"id": id, "by": by})),
+        Action::Simulate => match d.setup {
+            Some(setup) => crate::cam_sim::start(app, setup).map(|mut sim| {
+                // A restart keeps the speed picked.
+                if let Some(old) = &d.sim {
+                    sim.speed = old.speed;
+                }
+                d.sim = Some(sim);
+                Value::Null
+            }),
+            None => Err(tr("cam.panel.no_setup").to_string()),
+        },
+        Action::PlayPause => {
+            if let Some(sim) = d.sim.as_mut() {
+                if sim.done() {
+                    sim.restart();
+                } else {
+                    sim.playing = !sim.playing;
+                }
+            }
+            Ok(Value::Null)
+        }
+        Action::ToEnd => {
+            if let Some(sim) = d.sim.as_mut() {
+                sim.advance(f64::INFINITY);
+            }
+            Ok(Value::Null)
+        }
+        Action::StopSimulation => {
+            d.sim = None;
+            Ok(Value::Null)
+        }
         Action::DeleteTool(n) => app.run("cam.delete", json!({"tool": n})),
         Action::AddOperation => {
             let tool = tools.get(d.tool).and_then(|t| t["number"].as_u64()).and_then(|n| u32::try_from(n).ok());
@@ -1173,6 +1256,29 @@ mod tests {
         h.frames(2);
         h.step(&json!({"widget": "Cancel"})).unwrap();
         assert_eq!(h.app.machining.as_ref().unwrap().editing, None);
+    }
+
+    #[test]
+    fn simulate_plays_the_setup_against_its_stock_and_stops_when_the_design_changes() {
+        let mut h = Harness::new();
+        h.app.run("solid.box", json!({"length": 60, "width": 40, "height": 8})).unwrap();
+        h.app.run("cam.tool", json!({"number": 1, "diameter": 3.175})).unwrap();
+        h.app.run("cam.setup", json!({})).unwrap();
+        h.app.run("cam.face", json!({"tool": 1})).unwrap();
+        h.step(&json!({"start": "cam.generate"})).unwrap();
+        h.frames(2);
+        h.step(&json!({"widget": "Simulate"})).unwrap();
+        h.frames(2);
+        assert!(h.app.machining.as_ref().unwrap().sim.is_some(), "{:?}", h.app.machining.as_ref().unwrap().error);
+        h.step(&json!({"widget": "To End"})).unwrap();
+        let sim = h.app.machining.as_ref().unwrap().sim.as_ref().unwrap();
+        assert!(sim.done() && sim.stock.removed() > 0.0);
+        assert_eq!(super::scene_key(&h.app), None, "the toolpath lines step aside while it plays");
+        h.frames(2);
+        // A change to the design ends it.
+        h.app.run("cam.face", json!({"tool": 1, "depth": 0.5})).unwrap();
+        h.frames(2);
+        assert!(h.app.machining.as_ref().unwrap().sim.is_none());
     }
 
     #[test]

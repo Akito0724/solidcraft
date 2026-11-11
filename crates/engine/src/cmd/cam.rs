@@ -13,7 +13,7 @@ use crate::params::bad;
 use crate::schema::cam::{
     CamCuttingInfo, CamDeleteParams, CamDeleted, CamExportParams, CamExported, CamGenerateParams, CamGenerated, CamMoveParams, CamMoved,
     CamOpSummary, CamOperationParams, CamOperationResult, CamPathLines, CamPickParam, CamProgram, CamSetupParams, CamSetupResult, CamSetupSummary,
-    CamTabsInfo, CamToolInfo, CamToolParams, CamToolpaths, CamToolpathsParams, CamToolsResult,
+    CamSimSteps, CamSimulation, CamSimulationParams, CamTabsInfo, CamToolInfo, CamToolParams, CamToolpaths, CamToolpathsParams, CamToolsResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -26,6 +26,7 @@ const GENERATE_CONTRACT: TypedContract<CamGenerateParams> = TypedContract::new()
 const EXPORT_CONTRACT: TypedContract<CamExportParams> = TypedContract::new();
 const TOOLPATHS_CONTRACT: TypedContract<CamToolpathsParams> = TypedContract::new();
 const MOVE_CONTRACT: TypedContract<CamMoveParams> = TypedContract::new();
+const SIMULATION_CONTRACT: TypedContract<CamSimulationParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("cam.tool", "Machining Tool", crate::checked!("cam.tool", tool_cmd))
@@ -80,6 +81,15 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&MOVE_CONTRACT)
         .output(output_schema_for::<CamMoved>)
         .params("id: an operation, by: places to move (negative: earlier) among its setup's operations → setup, operations (ids in order)"),
+    CommandSpec::new("cam.simulation", "Simulate Machining", crate::checked!("cam.simulation", simulation_cmd))
+        .icon("play")
+        .noundo()
+        .contract(&SIMULATION_CONTRACT)
+        .output(output_schema_for::<CamSimulation>)
+        .params(
+            "setup? (default the only one), step? (mm, default 0.5) → setup, origin, flipped, stock_min, stock_max (machine), operations \
+             [{operation, name, tool, radius, points [[x,y,z,rapid]…]}], truncated?; machine coordinates, to cut a height map along",
+        ),
     CommandSpec::new("cam.face", "Face Milling", crate::checked!("cam.face", face_cmd))
         .icon("offset_face")
         .contract(&OPERATION_CONTRACT)
@@ -652,6 +662,49 @@ fn export_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     reply(cmd, CamExported { files, param_warnings: Vec::new() })
 }
 
+fn simulation_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.simulation";
+    let q: CamSimulationParams = parse(cmd, p)?;
+    let step = match q.step {
+        Some(v) if !(v.is_finite() && (0.01..=100.0).contains(&v)) => return Err(bad(cmd, "step is between 0.01 and 100 mm")),
+        Some(v) => v,
+        None => 0.5,
+    };
+    let setup = which_setup(s, cmd, q.setup)?;
+    let s: &Session = s;
+    let plan = s.doc.cam_plan(&s.model.state(), setup).map_err(|e| bad(cmd, e.to_string()))?;
+    let list = setup_paths(s, setup).map_err(|e| bad(cmd, e))?;
+    let mut budget = MAX_POINTS;
+    let mut truncated = false;
+    let mut operations = Vec::new();
+    for (op, path) in list {
+        let Ok(t) = path else { continue };
+        let mut points = Vec::new();
+        for (p, rapid) in t.points(step) {
+            if budget == 0 {
+                truncated = true;
+                break;
+            }
+            budget -= 1;
+            points.push([round(p.x, 4), round(p.y, 4), round(p.z, 4), if rapid { 1.0 } else { 0.0 }]);
+        }
+        operations.push(CamSimSteps { operation: op.id, name: op.name.clone(), tool: op.tool, radius: round(t.tool.diameter / 2.0, 4), points });
+    }
+    reply(
+        cmd,
+        CamSimulation {
+            setup,
+            origin: plan.frame.origin.map(|v| round(v, 4)),
+            flipped: plan.frame.flipped,
+            stock_min: plan.stock_min.map(|v| round(v, 4)),
+            stock_max: plan.stock_max.map(|v| round(v, 4)),
+            operations,
+            truncated,
+            param_warnings: Vec::new(),
+        },
+    )
+}
+
 fn toolpaths_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "cam.toolpaths";
     let q: CamToolpathsParams = parse(cmd, p)?;
@@ -836,6 +889,31 @@ mod tests {
         s.execute("edit.undo", &json!({})).unwrap();
         let order: Vec<u64> = s.doc.cam.operations.iter().map(|o| o.id).collect();
         assert_eq!(order, [id, face], "a move is one undo step");
+    }
+
+    #[test]
+    fn a_simulation_cuts_the_stock_around_the_block_and_leaves_the_block() {
+        let mut s = block();
+        s.execute("cam.tool", &json!({"number": 1, "diameter": 3.175, "flute_length": 20})).unwrap();
+        s.execute("cam.setup", &json!({})).unwrap();
+        s.execute("cam.contour", &json!({"tool": 1, "face": {"at": [10, 10, 10]}})).unwrap();
+        let sim = s.execute("cam.simulation", &json!({})).unwrap();
+        assert_eq!(sim["stock_min"], json!([-33.0, -23.0, -11.0]), "{sim}");
+        assert_eq!(sim["stock_max"], json!([33.0, 23.0, 0.0]));
+        let op = &sim["operations"][0];
+        let points: Vec<[f64; 4]> = serde_json::from_value(op["points"].clone()).unwrap();
+        let radius = op["radius"].as_f64().unwrap();
+        let mut stock = solidcraft_cam::Stock::new([-33.0, -23.0, -11.0], [33.0, 23.0, 0.0], 0.5).unwrap();
+        let moves: Vec<(solidcraft_cam::P3, bool)> = points.iter().map(|p| (solidcraft_cam::P3::new(p[0], p[1], p[2]), p[3] > 0.5)).collect();
+        solidcraft_cam::sim::cut(&mut stock, radius, &moves, 0, moves.len());
+        let at = |x: f64, y: f64| {
+            let i = ((x - stock.x0) / stock.dx).round() as usize;
+            let j = ((y - stock.y0) / stock.dy).round() as usize;
+            stock.column(i, j).unwrap().z
+        };
+        assert_eq!(at(0.0, 0.0), 0.0, "the stock's top over the block stays");
+        assert_eq!(at(31.5, 0.0), -11.0, "the slot around the block goes through");
+        assert!(s.execute("cam.simulation", &json!({"step": 1000})).is_err());
     }
 
     #[test]

@@ -10,6 +10,7 @@
 //! - [`ops`]: facing, pockets (with islands), contours (inside, outside or on, with tabs) and
 //!   drilling (with pecking), each turned into a [`toolpath::Toolpath`].
 //! - [`post`]: GRBL G-code, one program per tool, as a machine without a tool changer needs.
+//! - [`sim`]: the stock as a height map, cut down along a toolpath to play it back.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -17,6 +18,7 @@ pub mod geom2;
 pub mod ops;
 pub mod post;
 pub mod setup;
+pub mod sim;
 pub mod tool;
 pub mod toolpath;
 
@@ -27,6 +29,7 @@ pub use geom2::{Loop, Region, Vertex};
 pub use ops::{Clearance, ContourOp, Depths, DrillOp, FaceOp, Job, Operation, PocketOp, Side, Tabs, generate};
 pub use post::{PostOptions, by_tool, grbl};
 pub use setup::Frame;
+pub use sim::{Playback, Stock};
 pub use tool::{Cutting, Material, Tool, ToolKind};
 pub use toolpath::{Move, P3, Toolpath};
 
