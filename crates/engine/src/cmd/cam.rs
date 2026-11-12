@@ -1321,9 +1321,11 @@ mod tests {
         // above the part's top.
         let inside = s.execute("cam.preview", &json!({"type": "contour", "tool": 1, "face": {"at": [10, 10, 10]}, "side": "inside"})).unwrap();
         assert!((inside["operation"]["lowest"].as_f64().unwrap() + 1.0).abs() < 0.02, "{inside}");
-        assert!(
-            s.execute("cam.preview", &json!({"type": "contour", "tool": 1, "face": {"at": [10, 10, 10]}, "side": "inside", "offset": -1})).is_err()
-        );
+        // Lower it can't go: a preview says why, and the operation is refused.
+        let lower =
+            s.execute("cam.preview", &json!({"type": "contour", "tool": 1, "face": {"at": [10, 10, 10]}, "side": "inside", "offset": -1})).unwrap();
+        assert!(lower["operation"]["error"].as_str().unwrap_or("").contains("through the part"), "{lower}");
+        assert!(s.execute("cam.contour", &json!({"tool": 1, "face": {"at": [10, 10, 10]}, "side": "inside", "offset": -1})).is_err());
         // Back to where the model puts the bottom.
         let id = higher["id"].as_u64().unwrap();
         let back = s.execute("cam.operation", &json!({"id": id, "default_offset": true})).unwrap()["operation"].clone();
