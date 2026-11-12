@@ -5581,6 +5581,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::browser_canvas::paint_marks(app, &painter, &proj);
     crate::point_clouds::show(app, &painter, &proj);
     crate::cam_panel::paint_toolpaths(app, &painter, &proj);
+    crate::cam_panel::setup_handles(app, ui, &proj);
     crate::dialogs_assembly::origins(app, &painter, &proj);
     if !crate::joint_handles::visible(app) {
         crate::dialogs_assembly::joint_glyphs(app, &painter, &proj);

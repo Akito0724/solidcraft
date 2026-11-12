@@ -20,8 +20,36 @@ const SIDES: [&str; 3] = ["outside", "inside", "on"];
 const SIDE_LABELS: [&str; 3] = ["Outside", "Inside", "On"];
 const MATERIALS: [&str; 3] = ["wood", "acrylic", "aluminum"];
 const MATERIAL_LABELS: [&str; 3] = ["Wood", "Acrylic", "Aluminum"];
-const ORIGINS: [&str; 2] = ["top_center", "top_corner"];
-const ORIGIN_LABELS: [&str; 2] = ["Top center", "Top front left"];
+/// The work origin: a point of the stock's box, or (the last) a vertex of the model.
+const ORIGINS: [&str; 11] = [
+    "top_center",
+    "bottom_center",
+    "top_front_left",
+    "top_front_right",
+    "top_back_left",
+    "top_back_right",
+    "bottom_front_left",
+    "bottom_front_right",
+    "bottom_back_left",
+    "bottom_back_right",
+    "point",
+];
+const ORIGIN_LABELS: [&str; 11] = [
+    "Top center",
+    "Bottom center",
+    "Top front left",
+    "Top front right",
+    "Top back left",
+    "Top back right",
+    "Bottom front left",
+    "Bottom front right",
+    "Bottom back left",
+    "Bottom back right",
+    "Model vertex",
+];
+const STOCK_MODES: [&str; 2] = ["Margins", "Fixed size"];
+const PLACES: [&str; 5] = ["center", "front_left", "front_right", "back_left", "back_right"];
+const PLACE_LABELS: [&str; 5] = ["Center", "Front left", "Front right", "Back left", "Back right"];
 const TOOL_KINDS: [&str; 2] = ["flat_endmill", "drill"];
 const TOOL_KIND_LABELS: [&str; 2] = ["Flat end mill", "Drill"];
 
@@ -39,11 +67,27 @@ pub struct CamPanel {
     pub tool_flute: String,
     // The setup form.
     pub material: usize,
+    /// The face on the table, as picked.
+    pub table: TablePick,
+    /// Machine X as turned in the dialog (`None`: the setup's, or the nearest model axis).
+    pub x_axis: Option<[f64; 3]>,
     pub origin: usize,
-    pub flipped: bool,
+    /// The vertex picked for a work origin at the model.
+    pub origin_point: Option<[f64; 3]>,
     pub margin_side: String,
     pub margin_top: String,
     pub margin_bottom: String,
+    /// 0: the part grown by the margins, 1: a block of the size given.
+    pub stock_mode: usize,
+    /// The fixed stock's size along machine X, Y and Z; empty: the stock as it is.
+    pub stock_size: [String; 3],
+    pub stock_place: usize,
+    /// The selection the setup dialog last saw: a new face or vertex picked in it is taken.
+    seen_selection: Vec<Sel>,
+    /// The setup dialog's frame and stock as they stand, worked out without changing the design.
+    setup_preview: Option<SetupPreview>,
+    /// The axis arrow being dragged (0: X, 1: Y).
+    axis_drag: Option<usize>,
     // The operation form.
     pub kind: usize,
     /// Index into the tool library.
@@ -92,6 +136,27 @@ pub struct CamPanel {
     pending: Option<Action>,
 }
 
+/// Which face of the part sits on the machine's table.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TablePick {
+    /// As the setup has it.
+    Keep,
+    /// The model's bottom (machine Z is the model's Z).
+    Bottom,
+    /// A face picked in the view: its body and a point on it.
+    Face { body: String, at: [f64; 3] },
+}
+
+/// `cam.setup`'s dry run for the setup dialog's values.
+struct SetupPreview {
+    key: String,
+    revision: u64,
+    error: Option<String>,
+    frame: Option<solidcraft_engine::machining::Frame>,
+    stock_min: [f64; 3],
+    stock_max: [f64; 3],
+}
+
 /// `cam.preview`'s answer for the operation dialog's parameters.
 struct Preview {
     /// The parameters it answers (as JSON text) and the design revision: either changing works
@@ -126,11 +191,19 @@ impl Default for CamPanel {
             tool_kind: 0,
             tool_flute: String::new(),
             material: 0,
+            table: TablePick::Bottom,
+            x_axis: None,
             origin: 0,
-            flipped: false,
+            origin_point: None,
             margin_side: "3".into(),
             margin_top: "1".into(),
             margin_bottom: "0".into(),
+            stock_mode: 0,
+            stock_size: [String::new(), String::new(), String::new()],
+            stock_place: 0,
+            seen_selection: Vec::new(),
+            setup_preview: None,
+            axis_drag: None,
             kind: 2,
             tool: 0,
             side: 0,
@@ -311,24 +384,108 @@ impl CamPanel {
         Ok(p)
     }
 
-    fn setup_params(&self, body: Option<String>) -> Value {
-        let mut p = json!({
-            "material": MATERIALS.get(self.material).copied().unwrap_or("wood"),
-            "origin": ORIGINS.get(self.origin).copied().unwrap_or("top_center"),
-            "flipped": self.flipped,
-        });
-        for (key, text) in [("margin_side", &self.margin_side), ("margin_top", &self.margin_top), ("margin_bottom", &self.margin_bottom)] {
-            if let Some(v) = number(text) {
-                p[key] = json!(v);
-            }
+    /// `cam.setup`'s parameters for the setup dialog: setup `id` changed, or a new one of `body`.
+    fn setup_params(&self, id: Option<u64>, body: Option<String>) -> Value {
+        let mut p = json!({"material": MATERIALS.get(self.material).copied().unwrap_or("wood")});
+        match (id, body) {
+            (Some(id), _) => p["id"] = json!(id),
+            (None, Some(b)) => p["body"] = json!(b),
+            (None, None) => {}
         }
-        if let Some(b) = body {
-            p["body"] = json!(b);
+        match &self.table {
+            TablePick::Keep => {}
+            TablePick::Bottom => p["flipped"] = json!(false),
+            TablePick::Face { body, at } => p["table"] = json!({"at": at, "body": body}),
+        }
+        if let Some(x) = self.x_axis {
+            p["x_axis"] = json!(x);
+        }
+        match ORIGINS.get(self.origin).copied() {
+            Some("point") => {
+                if let Some(at) = self.origin_point {
+                    p["origin_point"] = json!(at);
+                }
+            }
+            Some(o) => p["origin"] = json!(o),
+            None => {}
+        }
+        if self.stock_mode == 0 {
+            p["stock"] = json!("margin");
+            for (key, text) in [("margin_side", &self.margin_side), ("margin_top", &self.margin_top), ("margin_bottom", &self.margin_bottom)] {
+                if let Some(v) = number(text) {
+                    p[key] = json!(v);
+                }
+            }
+        } else {
+            p["stock"] = json!("fixed");
+            let size: Vec<f64> = self.stock_size.iter().filter_map(|t| number(t)).collect();
+            if size.len() == 3 {
+                p["stock_size"] = json!(size);
+            }
+            p["stock_place"] = json!(PLACES.get(self.stock_place).copied().unwrap_or("center"));
         }
         p
     }
 
-    /// `cam.operation`'s parameters from the form and the model's selection.
+    /// Take a face or vertex newly picked while the setup dialog is open: a face is the one on
+    /// the table, a vertex the work origin.
+    fn take_setup_picks(&mut self, selection: &[Sel]) {
+        if selection == self.seen_selection.as_slice() {
+            return;
+        }
+        for s in selection {
+            if self.seen_selection.contains(s) {
+                continue;
+            }
+            match s {
+                Sel::Face { body, point, .. } => {
+                    self.table = TablePick::Face { body: body.clone(), at: [point.x, point.y, point.z] };
+                    self.x_axis = None;
+                }
+                Sel::Vertex { point, .. } => {
+                    self.origin_point = Some([point.x, point.y, point.z]);
+                    self.origin = ORIGINS.len() - 1;
+                }
+                _ => {}
+            }
+        }
+        self.seen_selection = selection.to_vec();
+    }
+
+    /// Work the setup dialog's frame and stock out again when its values changed.
+    fn refresh_setup_preview(&mut self, app: &mut SolveApp, id: Option<u64>, selection: &[Sel]) {
+        self.take_setup_picks(selection);
+        let mut params = self.setup_params(id, if id.is_none() { selected_body(selection) } else { None });
+        params["dry_run"] = json!(true);
+        let key = params.to_string();
+        let revision = app.session.revision;
+        if self.setup_preview.as_ref().is_some_and(|p| p.key == key && p.revision == revision) {
+            return;
+        }
+        let arr3 = |v: &Value| -> Option<[f64; 3]> { Some([v.get(0)?.as_f64()?, v.get(1)?.as_f64()?, v.get(2)?.as_f64()?]) };
+        let mut preview = SetupPreview { key, revision, error: None, frame: None, stock_min: [0.0; 3], stock_max: [0.0; 3] };
+        match app.session.execute("cam.setup", &params) {
+            Ok(v) => {
+                let f = &v["frame"];
+                preview.frame = match (arr3(&f["origin"]), arr3(&f["x"]), arr3(&f["y"]), arr3(&f["z"])) {
+                    (Some(origin), Some(x), Some(y), Some(z)) => Some(solidcraft_engine::machining::Frame { origin, x, y, z }),
+                    _ => None,
+                };
+                preview.stock_min = arr3(&v["stock_min"]).unwrap_or_default();
+                preview.stock_max = arr3(&v["stock_max"]).unwrap_or_default();
+            }
+            Err(e) => preview.error = Some(e.to_string()),
+        }
+        self.setup_preview = Some(preview);
+    }
+
+    /// Turn machine X a quarter turn about Z (onto where Y was).
+    fn turn_x(&mut self) {
+        if let Some(f) = self.setup_preview.as_ref().and_then(|p| p.frame) {
+            self.x_axis = Some(f.y.map(f64::round));
+        }
+    }
+
     fn operation_params(&self, setup: u64, tool: u32, selection: &[Sel]) -> Result<Value, String> {
         let kind = KINDS.get(self.kind).copied().unwrap_or("contour");
         let mut p = json!({"setup": setup, "type": kind, "tool": tool});
@@ -459,6 +616,93 @@ pub(crate) fn scene_lines(sc: &mut crate::gpu::GpuScene, app: &SolveApp) {
             sc.line(p.to_f32(), q.to_f32(), edge, 1.0, false);
         }
     }
+}
+
+/// While the setup dialog is open: the stock's box and the machine's axes at the work origin,
+/// X and Y with a knob at their tips. Dragging a knob turns the axes about Z, a quarter turn at
+/// a time, to where the pointer is.
+pub fn setup_handles(app: &mut SolveApp, ui: &mut egui::Ui, proj: &crate::viewport::Proj) {
+    let Some(d) = app.machining.as_mut() else { return };
+    let frame = match (&d.dialog, &d.setup_preview) {
+        (Some(CamDialog::Setup(_)), Some(p)) => p.frame.map(|f| (f, p.stock_min, p.stock_max)),
+        _ => None,
+    };
+    let Some((f, lo, hi)) = frame else {
+        d.axis_drag = None;
+        return;
+    };
+    let t = Tokens::get();
+    let painter = ui.painter().clone();
+    let model = |m: [f64; 3]| {
+        let p = f.to_model(m);
+        Vec3::new(p[0], p[1], p[2])
+    };
+    let stock = egui::Stroke::new(1.2, t.accent);
+    for i in 0..8usize {
+        for bit in [1usize, 2, 4] {
+            if i & bit != 0 {
+                continue;
+            }
+            let corner = |k: usize| [0, 1, 2].map(|a| if k & (1 << a) == 0 { lo[a] } else { hi[a] });
+            if let (Some(a), Some(b)) = (proj.to_screen(model(corner(i))), proj.to_screen(model(corner(i | bit)))) {
+                painter.line_segment([a, b], stock);
+            }
+        }
+    }
+    let size = (0..3).map(|i| hi[i] - lo[i]).fold(0.0f64, f64::max);
+    let len = (size * 0.3).clamp(8.0, 60.0);
+    let Some(origin) = proj.to_screen(model([0.0; 3])) else { return };
+    let axes = [([len, 0.0, 0.0], t.axis_x, "X"), ([0.0, len, 0.0], t.axis_y, "Y"), ([0.0, 0.0, len], t.axis_z, "Z")];
+    let mut tips = Vec::new();
+    for (m, color, name) in axes {
+        let Some(tip) = proj.to_screen(model(m)) else { continue };
+        painter.line_segment([origin, tip], egui::Stroke::new(2.5, color));
+        painter.text(tip + egui::vec2(8.0, -8.0), egui::Align2::LEFT_BOTTOM, name, egui::FontId::proportional(13.0), color);
+        tips.push((tip, color));
+    }
+    painter.circle_filled(origin, 3.5, t.text);
+    for (k, (tip, color)) in tips.into_iter().take(2).enumerate() {
+        painter.circle(tip, 6.0, t.overlay, egui::Stroke::new(2.0, color));
+        let rect = egui::Rect::from_center_size(tip, egui::Vec2::splat(18.0));
+        let response = ui.interact(rect, egui::Id::new(("sc_cam_axis", k)), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+        crate::scenario::publish_handle(if k == 0 { "cam:axis:x" } else { "cam:axis:y" }, rect.center());
+        if response.drag_started() {
+            d.axis_drag = Some(k);
+        }
+        if (response.dragged() || response.drag_stopped())
+            && d.axis_drag == Some(k)
+            && let Some(at) = response.interact_pointer_pos().or_else(|| ui.input(|i| i.pointer.latest_pos()))
+            && let Some(to) = axis_toward(&f, proj, at)
+        {
+            // The arrow dragged points where the pointer is; X follows from a dragged Y.
+            let x = if k == 0 { to } else { solidcraft_engine::machining::cross(to, f.z).map(f64::round) };
+            if x != f.x.map(f64::round) {
+                d.x_axis = Some(x);
+            }
+        }
+        if response.drag_stopped() {
+            d.axis_drag = None;
+        }
+    }
+}
+
+/// The one of ±X and ±Y of `f` nearest the pointer at `at`, met on the machine's XY plane
+/// through the work origin. `None` when the view runs along that plane.
+fn axis_toward(f: &solidcraft_engine::machining::Frame, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<[f64; 3]> {
+    let (o, dir) = proj.ray(at);
+    let n = f.z;
+    let along = dir.x * n[0] + dir.y * n[1] + dir.z * n[2];
+    if along.abs() < 1e-9 {
+        return None;
+    }
+    let s = ((f.origin[0] - o.x) * n[0] + (f.origin[1] - o.y) * n[1] + (f.origin[2] - o.z) * n[2]) / along;
+    let hit = [o.x + dir.x * s, o.y + dir.y * s, o.z + dir.z * s];
+    let m = f.to_machine(hit);
+    if m[0].hypot(m[1]) < 1e-9 || !m[0].is_finite() || !m[1].is_finite() {
+        return None;
+    }
+    let pick = if m[0].abs() >= m[1].abs() { f.x.map(|c| c * m[0].signum()) } else { f.y.map(|c| c * m[1].signum()) };
+    Some(pick.map(f64::round))
 }
 
 /// What the model scene's lines depend on: `None` while no toolpaths are shown.
@@ -609,6 +853,11 @@ const MESSAGES: &[(&str, &str)] = &[
     ("the tool library is full", "cam.error.library_full"),
     ("there are too many setups", "cam.error.too_many_setups"),
     ("there are too many operations", "cam.error.too_many_operations"),
+    ("the face on the table must face along one of the model's axes", "cam.error.table_axis"),
+    ("the part ({x} × {y} × {z} mm) doesn't fit in the stock", "cam.error.stock_too_small"),
+    ("the stock's size must be between 0 and 10000 mm", "cam.error.stock_size"),
+    ("`stock_size` must be between 0 and 10000 mm along each axis", "cam.error.stock_size"),
+    ("the setup's axes are not square", "cam.error.axes"),
 ];
 
 /// The values of `pattern`'s `{…}` holes when `text` is the pattern filled in.
@@ -981,6 +1230,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if d.dialog == Some(CamDialog::Operation) {
         d.refresh_preview(app, &tools, &selection);
     }
+    if let Some(CamDialog::Setup(id)) = d.dialog {
+        d.refresh_setup_preview(app, id, &selection);
+    } else {
+        d.setup_preview = None;
+    }
     let mut action = None;
     if let Some(dialog) = d.dialog {
         action = dialog_card(app, ctx, &mut d, dialog, &tools, &selection);
@@ -1029,7 +1283,8 @@ fn dialog_card(app: &mut SolveApp, ctx: &egui::Context, d: &mut CamPanel, dialog
     let mut action = None;
     let valid = match dialog {
         CamDialog::Operation => d.preview.as_ref().is_some_and(|p| p.error.is_none()),
-        _ => true,
+        CamDialog::Setup(_) => d.setup_preview.as_ref().is_none_or(|p| p.error.is_none()),
+        CamDialog::Tool => true,
     };
     let response = panel.window(ctx).show(ctx, |ui| {
         let (closed, done) = panel.feature(
@@ -1046,7 +1301,8 @@ fn dialog_card(app: &mut SolveApp, ctx: &egui::Context, d: &mut CamPanel, dialog
                 }
                 let error = match dialog {
                     CamDialog::Operation => d.preview.as_ref().and_then(|p| p.error.clone()).or_else(|| d.error.clone()),
-                    _ => d.error.clone(),
+                    CamDialog::Setup(_) => d.setup_preview.as_ref().and_then(|p| p.error.clone()).or_else(|| d.error.clone()),
+                    CamDialog::Tool => d.error.clone(),
                 };
                 if let Some(e) = error {
                     ui.label(RichText::new(cam_text(&e)).color(t.error));
@@ -1159,13 +1415,54 @@ fn operation_body(ui: &mut egui::Ui, d: &mut CamPanel, kind: &str, tools: &[Valu
     }
 }
 
+/// The setup dialog: the material, the face on the table and the axes it gives, the work
+/// origin and the stock.
 fn setup_body(ui: &mut egui::Ui, d: &mut CamPanel) {
+    let t = Tokens::get();
     crate::ui_kit::row(ui, "Material", |ui| crate::ui_kit::dropdown(ui, "cam_material", &mut d.material, &MATERIAL_LABELS));
+    let shown = match &d.table {
+        TablePick::Keep => tr("cam.panel.kept").to_string(),
+        TablePick::Bottom => tr_label("Model bottom").to_string(),
+        TablePick::Face { .. } => solidcraft_ui_text::format("cam.panel.picked", &[("n", "1")]),
+    };
+    crate::ui_kit::row(ui, "Table face", |ui| {
+        crate::ui_kit::selection_field(ui, &shown, crate::ui_kit::Selection { active: true, filled: true });
+    });
+    ui.horizontal(|ui| {
+        if crate::ui_kit::button(ui, tr_label("Model bottom"), crate::ui_kit::Button::Small).clicked() {
+            d.table = TablePick::Bottom;
+            d.x_axis = None;
+        }
+        if crate::ui_kit::button(ui, tr_label("Turn 90°"), crate::ui_kit::Button::Small).clicked() {
+            d.turn_x();
+        }
+    });
+    crate::ui_kit::text(ui, tr("cam.panel.table_hint"), crate::ui_kit::Text::Hint("tool"));
     crate::ui_kit::row(ui, "Origin", |ui| crate::ui_kit::dropdown(ui, "cam_origin", &mut d.origin, &ORIGIN_LABELS));
-    crate::ui_kit::checkbox(ui, tr_label("Turn over"), &mut d.flipped);
-    field(ui, "Side margin", &mut d.margin_side, "3");
-    field(ui, "Top margin", &mut d.margin_top, "1");
-    field(ui, "Bottom margin", &mut d.margin_bottom, "0");
+    if ORIGINS.get(d.origin) == Some(&"point") && d.origin_point.is_none() {
+        crate::ui_kit::text(ui, tr("cam.panel.vertex_hint"), crate::ui_kit::Text::Hint("tool"));
+    }
+    ui.add_space(t.space_4);
+    crate::ui_kit::segmented(ui, &mut d.stock_mode, &STOCK_MODES, crate::ui_kit::Segments::default());
+    ui.add_space(t.space_4);
+    let size = d.setup_preview.as_ref().filter(|p| p.frame.is_some()).map(|p| [0, 1, 2].map(|i| p.stock_max[i] - p.stock_min[i]));
+    if d.stock_mode == 0 {
+        field(ui, "Side margin", &mut d.margin_side, "3");
+        field(ui, "Top margin", &mut d.margin_top, "1");
+        field(ui, "Bottom margin", &mut d.margin_bottom, "0");
+    } else {
+        for (i, label) in ["Stock X", "Stock Y", "Stock Z"].into_iter().enumerate() {
+            let hint = size.and_then(|s| s.get(i).copied()).map(|v| format!("{}", (v * 1000.0).round() / 1000.0)).unwrap_or_default();
+            if let Some(text) = d.stock_size.get_mut(i) {
+                field(ui, label, text, &hint);
+            }
+        }
+        crate::ui_kit::row(ui, "Part at", |ui| crate::ui_kit::dropdown(ui, "cam_stock_place", &mut d.stock_place, &PLACE_LABELS));
+    }
+    if let Some([x, y, z]) = size {
+        let mm = format!("{:.1} × {:.1} × {:.1}", x, y, z);
+        ui.label(RichText::new(solidcraft_ui_text::format("cam.panel.stock_size", &[("mm", &mm)])).small().color(t.text_dim));
+    }
     if let CamDialog::Setup(Some(id)) = d.dialog.unwrap_or(CamDialog::Tool)
         && crate::ui_kit::button(ui, tr_label("Delete"), crate::ui_kit::Button::Normal).clicked()
     {
@@ -1250,22 +1547,35 @@ fn run(app: &mut SolveApp, d: &mut CamPanel, action: Action, tools: &[Value], se
             match &setup {
                 Some(s) => {
                     d.material = MATERIALS.iter().position(|m| *m == text(&s["material"])).unwrap_or(0);
+                    d.table = TablePick::Keep;
                     d.origin = ORIGINS.iter().position(|o| *o == text(&s["origin"])).unwrap_or(0);
-                    d.flipped = s["flipped"].as_bool().unwrap_or(false);
+                    d.origin_point =
+                        s["origin_point"].as_array().and_then(|a| Some([a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?]));
                     d.margin_side = num(&s["margins"][0]);
                     d.margin_top = num(&s["margins"][1]);
                     d.margin_bottom = num(&s["margins"][2]);
+                    d.stock_mode = usize::from(s["stock_mode"] == "fixed");
+                    d.stock_size = [0, 1, 2].map(|i| num(&s["stock_size"][i]));
+                    d.stock_place = PLACES.iter().position(|p| *p == text(&s["stock_place"])).unwrap_or(0);
                 }
                 None => {
                     let fresh = CamPanel::default();
                     d.material = fresh.material;
+                    d.table = fresh.table;
                     d.origin = fresh.origin;
-                    d.flipped = fresh.flipped;
+                    d.origin_point = None;
                     d.margin_side = fresh.margin_side;
                     d.margin_top = fresh.margin_top;
                     d.margin_bottom = fresh.margin_bottom;
+                    d.stock_mode = 0;
+                    d.stock_size = fresh.stock_size;
+                    d.stock_place = 0;
                 }
             }
+            // What is selected as it opens stays out of it: only a new pick counts.
+            d.x_axis = None;
+            d.seen_selection = selection.to_vec();
+            d.setup_preview = None;
             d.dialog = Some(CamDialog::Setup(setup.and_then(|s| s["id"].as_u64())));
             Ok(Value::Null)
         }
@@ -1310,10 +1620,7 @@ fn run(app: &mut SolveApp, d: &mut CamPanel, action: Action, tools: &[Value], se
                 }
             }
             Some(CamDialog::Setup(id)) => {
-                let mut p = d.setup_params(if id.is_none() { selected_body(selection) } else { None });
-                if let Some(id) = id {
-                    p["id"] = json!(id);
-                }
+                let p = d.setup_params(id, if id.is_none() { selected_body(selection) } else { None });
                 app.run("cam.setup", p).map(|v| {
                     d.setup = v["id"].as_u64();
                     d.dialog = None;
@@ -1547,6 +1854,60 @@ mod tests {
         let d = h.app.machining.as_ref().unwrap();
         assert_eq!(d.dialog, None, "OK closes it");
         assert_eq!(d.selected_op, ops[0]["id"].as_u64(), "the new operation is picked in the browser");
+    }
+
+    #[test]
+    fn the_setup_dialog_puts_a_picked_face_on_the_table_turns_x_and_sizes_the_stock() {
+        let mut h = boxed();
+        h.step(&json!({"start": "cam.setup"})).unwrap();
+        h.frames(2);
+        // The default: the model's bottom on the table, Z up.
+        let z = |h: &Harness| h.app.machining.as_ref().and_then(|d| d.setup_preview.as_ref()).and_then(|p| p.frame).map(|f| f.z.map(f64::round));
+        assert_eq!(z(&h), Some([0.0, 0.0, 1.0]));
+        // Picking the box's back face (+Y) puts it on the table: machine Z runs along −Y.
+        let state = crate::open_meshing::session_world(&h.app.session);
+        let body = state.bodies.first().unwrap();
+        let faces = body.body.faces(0.1).unwrap();
+        let back = faces.iter().filter(|f| f.plane_normal.is_some()).max_by(|a, b| a.centroid.y.total_cmp(&b.centroid.y)).unwrap();
+        h.app.session.selection = vec![Sel::Face { body: body.name.clone(), index: back.index, point: back.centroid }];
+        h.frames(3);
+        assert_eq!(z(&h).map(|v| v.map(|c| c + 0.0)), Some([0.0, -1.0, 0.0]));
+        assert!(matches!(h.app.machining.as_ref().unwrap().table, super::TablePick::Face { .. }));
+        // A quarter turn puts X where Y was.
+        let before = h.app.machining.as_ref().and_then(|d| d.setup_preview.as_ref()).and_then(|p| p.frame).unwrap();
+        h.app.machining.as_mut().unwrap().turn_x();
+        h.frames(2);
+        let after = h.app.machining.as_ref().and_then(|d| d.setup_preview.as_ref()).and_then(|p| p.frame).unwrap();
+        assert_eq!(after.x.map(f64::round), before.y.map(f64::round));
+        assert!(crate::scenario::handle_at("cam:axis:x").is_some(), "the axes show with knobs to drag");
+        // A fixed stock 10 mm bigger along X, the part at its front left; a bottom corner origin.
+        {
+            let d = h.app.machining.as_mut().unwrap();
+            let p = d.setup_preview.as_ref().unwrap();
+            let size = [0, 1, 2].map(|i| p.stock_max[i] - p.stock_min[i]);
+            d.stock_mode = 1;
+            d.stock_size = [format!("{}", size[0] + 10.0), format!("{}", size[1]), format!("{}", size[2])];
+            d.stock_place = 1;
+            d.origin = 6;
+        }
+        h.frames(2);
+        assert!(h.app.machining.as_ref().unwrap().setup_preview.as_ref().unwrap().error.is_none());
+        ok(&mut h);
+        let cam = generated(&mut h);
+        let setup = &cam["setups"][0];
+        assert_eq!(setup["stock_mode"], "fixed", "{cam}");
+        assert_eq!(setup["stock_place"], "front_left");
+        assert_eq!(setup["origin"], "bottom_front_left");
+        assert_eq!(setup["z_axis"].as_array().unwrap()[1].as_f64(), Some(-1.0));
+        // Opened again, the dialog keeps the face on the table as it is.
+        let summary = setup.clone();
+        let tools: Vec<serde_json::Value> = Vec::new();
+        let selection = h.app.session.selection.clone();
+        let mut d = h.app.machining.take().unwrap();
+        run(&mut h.app, &mut d, Action::OpenSetup(Some(summary)), &tools, &selection);
+        assert_eq!(d.table, super::TablePick::Keep);
+        assert_eq!(d.stock_mode, 1);
+        h.app.machining = Some(d);
     }
 
     #[test]
