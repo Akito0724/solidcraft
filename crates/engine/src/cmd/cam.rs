@@ -5,13 +5,13 @@ use std::path::Path;
 
 use serde_json::Value;
 use solidcraft_cam::{Cutting, Material, Side, Tabs, Tool, ToolKind, Toolpath};
-use solidcraft_doc::cam::{CamOperation, CamSetup, GeoPick, OpSpec, StockMargin, WorkOrigin};
+use solidcraft_doc::cam::{CamOperation, CamSetup, FixedStock, GeoPick, OpSpec, SetupAxes, StockMargin, WorkOrigin, WorkZero, axis_along};
 
 use super::CommandSpec;
 use super::design_link::absolute;
 use crate::params::bad;
 use crate::schema::cam::{
-    CamCuttingInfo, CamDeleteParams, CamDeleted, CamExportParams, CamExported, CamGenerateParams, CamGenerated, CamMoveParams, CamMoved,
+    CamCuttingInfo, CamDeleteParams, CamDeleted, CamExportParams, CamExported, CamFrame, CamGenerateParams, CamGenerated, CamMoveParams, CamMoved,
     CamOpSummary, CamOperationParams, CamOperationResult, CamPathLines, CamPickParam, CamPreview, CamProgram, CamSetupParams, CamSetupResult,
     CamSetupSummary, CamSimSteps, CamSimulation, CamSimulationParams, CamTabsInfo, CamToolInfo, CamToolParams, CamToolpaths, CamToolpathsParams,
     CamToolsResult,
@@ -40,8 +40,9 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&SETUP_CONTRACT)
         .output(output_schema_for::<CamSetupResult>)
         .params(
-            "id? (change), name?, body? (default the only body), material?: wood|acrylic|aluminum, origin?: top_center|top_corner, flipped?, \
-             margin_side?, margin_top?, margin_bottom?, safe_z?, retract? → id, name, body, stock [x,y,z], part_top",
+            "id? (change), name?, body? (default the only body), material?: wood|acrylic|aluminum, table? {at} (the face on the table), x_axis?, \
+             origin?: top_center|bottom_center|top_front_left…bottom_back_right, origin_point? [x,y,z], stock?: margin|fixed, stock_size?, stock_place?, \
+             margin_side?, margin_top?, margin_bottom?, safe_z?, retract?, dry_run? → id, name, body, stock [x,y,z], part_top, frame, stock_min, stock_max",
         ),
     CommandSpec::new("cam.operation", "Machining Operation", crate::checked!("cam.operation", operation_cmd))
         .icon("extrude")
@@ -94,7 +95,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&SIMULATION_CONTRACT)
         .output(output_schema_for::<CamSimulation>)
         .params(
-            "setup? (default the only one), step? (mm, default 0.5) → setup, origin, flipped, stock_min, stock_max (machine), operations \
+            "setup? (default the only one), step? (mm, default 0.5) → setup, frame {origin, x, y, z}, stock_min, stock_max (machine), operations \
              [{operation, name, tool, radius, points [[x,y,z,rapid]…]}], truncated?; machine coordinates, to cut a height map along",
         ),
     CommandSpec::new("cam.face", "Face Milling", crate::checked!("cam.face", face_cmd))
@@ -241,6 +242,10 @@ fn setup_cmd(s: &mut Session, p: &Value) -> Result<Value> {
                 name: format!("Setup {}", s.doc.cam.setups.len() + 1),
                 body: String::new(),
                 material: Material::Wood,
+                table: None,
+                axes: None,
+                zero: None,
+                fixed_stock: None,
                 origin: WorkOrigin::TopCenter,
                 flipped: false,
                 margin: StockMargin::default(),
@@ -270,15 +275,41 @@ fn setup_cmd(s: &mut Session, p: &Value) -> Result<Value> {
             _ => return Err(bad(cmd, format!("`material` must be wood, acrylic or aluminum, not {m}"))),
         };
     }
-    if let Some(o) = q.origin.as_deref() {
-        setup.origin = match o {
-            "top_center" => WorkOrigin::TopCenter,
-            "top_corner" => WorkOrigin::TopCorner,
-            _ => return Err(bad(cmd, format!("`origin` must be top_center or top_corner, not {o}"))),
-        };
-    }
+    // An older setup's `flipped` and `origin` become the axes and origin they mean.
+    setup.axes = Some(setup.axes());
+    setup.zero = Some(setup.zero());
+    setup.flipped = false;
+    setup.origin = WorkOrigin::TopCenter;
     if let Some(f) = q.flipped {
-        setup.flipped = f;
+        setup.axes = Some(SetupAxes { x: [1.0, 0.0, 0.0], z: if f { [0.0, 0.0, -1.0] } else { [0.0, 0.0, 1.0] } });
+        setup.table = None;
+    }
+    if let Some(t) = &q.table {
+        let face = pick(t, &setup.body);
+        let st = s.model.state();
+        let axes = s.doc.cam_table_axes(&st, &face).map_err(|e| bad(cmd, e.to_string()))?;
+        setup.axes = Some(axes);
+        setup.table = Some(face);
+    }
+    if let Some(x) = q.x_axis {
+        let z = setup.axes().z;
+        let x = axis_along(x).ok_or_else(|| bad(cmd, "`x_axis` must run along one of the model's axes"))?;
+        if (x[0] * z[0] + x[1] * z[1] + x[2] * z[2]).abs() > 1e-6 {
+            return Err(bad(cmd, "`x_axis` must be square to the machine's Z (the face on the table)"));
+        }
+        setup.axes = Some(SetupAxes { x, z });
+    }
+    if let Some(o) = q.origin.as_deref() {
+        setup.zero = Some(WorkZero::Stock {
+            at: origin_at(o)
+                .ok_or_else(|| bad(cmd, format!("`origin` must be top_center, bottom_center or a corner like top_front_left, not {o}")))?,
+        });
+    }
+    if let Some(at) = q.origin_point {
+        if !at.iter().all(|v| v.is_finite() && v.abs() < 1e6) {
+            return Err(bad(cmd, "`origin_point` must be a point"));
+        }
+        setup.zero = Some(WorkZero::Point { at });
     }
     setup.margin = StockMargin {
         side: positive_or_zero(cmd, "margin_side", q.margin_side, setup.margin.side)?,
@@ -298,11 +329,133 @@ fn setup_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         Some(slot) => *slot = setup.clone(),
         None => next.cam.setups.push(setup.clone()),
     }
+    // The stock as it is before the change: a fixed stock's default size.
     let st = s.model.state();
+    let before = next.cam_plan(&st, id).ok().map(|plan| [0, 1, 2].map(|i| round(plan.stock_max[i] - plan.stock_min[i], 3)));
+    match q.stock.as_deref() {
+        None => {}
+        Some("margin") => setup.fixed_stock = None,
+        Some("fixed") => {
+            if setup.fixed_stock.is_none() {
+                let size = before.ok_or_else(|| bad(cmd, "give the stock's size with `stock_size`"))?;
+                setup.fixed_stock = Some(FixedStock { size, place: [0, 0] });
+            }
+        }
+        Some(other) => return Err(bad(cmd, format!("`stock` must be margin or fixed, not {other}"))),
+    }
+    if q.stock_size.is_some() || q.stock_place.is_some() {
+        let mut f = setup.fixed_stock.ok_or_else(|| bad(cmd, "`stock_size` and `stock_place` are for a fixed stock: set `stock` to fixed"))?;
+        if let Some(size) = q.stock_size {
+            if !size.iter().all(|v| v.is_finite() && *v > 0.0 && *v <= 10_000.0) {
+                return Err(bad(cmd, "`stock_size` must be between 0 and 10000 mm along each axis"));
+            }
+            f.size = size;
+        }
+        if let Some(place) = q.stock_place.as_deref() {
+            f.place = place_at(place).ok_or_else(|| {
+                bad(
+                    cmd,
+                    format!("`stock_place` must be center, front_left, front_right, back_left, back_right, front, back, left or right, not {place}"),
+                )
+            })?;
+        }
+        setup.fixed_stock = Some(f);
+    }
+    match next.cam.setups.iter_mut().find(|x| x.id == id) {
+        Some(slot) => *slot = setup.clone(),
+        None => next.cam.setups.push(setup.clone()),
+    }
     let plan = next.cam_plan(&st, id).map_err(|e| bad(cmd, e.to_string()))?;
-    *s.doc_mut() = next;
+    if !q.dry_run.unwrap_or(false) {
+        *s.doc_mut() = next;
+    }
     let size = [0, 1, 2].map(|i| round(plan.stock_max[i] - plan.stock_min[i], 3));
-    reply(cmd, CamSetupResult { id, name: setup.name, body: setup.body, stock: size, part_top: round(plan.part_top, 3), param_warnings: Vec::new() })
+    reply(
+        cmd,
+        CamSetupResult {
+            id,
+            name: setup.name,
+            body: setup.body,
+            stock: size,
+            part_top: round(plan.part_top, 3),
+            frame: frame_info(&plan.frame),
+            stock_min: plan.stock_min.map(|v| round(v, 4)),
+            stock_max: plan.stock_max.map(|v| round(v, 4)),
+            param_warnings: Vec::new(),
+        },
+    )
+}
+
+/// A setup's frame, rounded, for a reply.
+fn frame_info(f: &solidcraft_cam::Frame) -> CamFrame {
+    let r = |v: [f64; 3]| v.map(|c| round(c, 6));
+    CamFrame { origin: r(f.origin), x: r(f.x), y: r(f.y), z: r(f.z) }
+}
+
+/// The stock-box point an origin name means: −1, 0 or 1 along machine X, Y and Z.
+fn origin_at(name: &str) -> Option<[i8; 3]> {
+    match name {
+        "top_center" => return Some([0, 0, 1]),
+        "bottom_center" => return Some([0, 0, -1]),
+        "top_corner" => return Some([-1, -1, 1]),
+        _ => {}
+    }
+    let mut parts = name.split('_');
+    let z = match parts.next()? {
+        "top" => 1,
+        "bottom" => -1,
+        _ => return None,
+    };
+    let y = match parts.next()? {
+        "front" => -1,
+        "back" => 1,
+        _ => return None,
+    };
+    let x = match parts.next()? {
+        "left" => -1,
+        "right" => 1,
+        _ => return None,
+    };
+    parts.next().is_none().then_some([x, y, z])
+}
+
+/// The name of a stock-box point: the inverse of [`origin_at`].
+fn origin_name(at: [i8; 3]) -> String {
+    let z = if at[2] < 0 { "bottom" } else { "top" };
+    match (at[0], at[1]) {
+        (0, 0) => format!("{z}_center"),
+        (x, y) => format!("{z}_{}_{}", if y < 0 { "front" } else { "back" }, if x < 0 { "left" } else { "right" }),
+    }
+}
+
+/// Where the part sits in a fixed stock: −1, 0 or 1 along machine X and Y.
+fn place_at(name: &str) -> Option<[i8; 2]> {
+    Some(match name {
+        "center" => [0, 0],
+        "front_left" => [-1, -1],
+        "front_right" => [1, -1],
+        "back_left" => [-1, 1],
+        "back_right" => [1, 1],
+        "front" => [0, -1],
+        "back" => [0, 1],
+        "left" => [-1, 0],
+        "right" => [1, 0],
+        _ => return None,
+    })
+}
+
+fn place_name(place: [i8; 2]) -> &'static str {
+    match (place[0].signum(), place[1].signum()) {
+        (-1, -1) => "front_left",
+        (1, -1) => "front_right",
+        (-1, 1) => "back_left",
+        (1, 1) => "back_right",
+        (0, -1) => "front",
+        (0, 1) => "back",
+        (-1, 0) => "left",
+        (1, 0) => "right",
+        _ => "center",
+    }
 }
 
 /// The setup an operation names, or the only one.
@@ -695,13 +848,22 @@ fn generate_cmd(s: &mut Session, p: &Value) -> Result<Value> {
                 name: x.name.clone(),
                 body: x.body.clone(),
                 material: material_name(x.material).into(),
-                flipped: x.flipped,
-                origin: match x.origin {
-                    WorkOrigin::TopCenter => "top_center",
-                    WorkOrigin::TopCorner => "top_corner",
-                }
-                .into(),
+                flipped: x.axes().z[2] < -0.5,
+                table: x.table.as_ref().map(|t| t.at),
+                x_axis: x.axes().x,
+                z_axis: x.axes().z,
+                origin: match x.zero() {
+                    WorkZero::Stock { at } => origin_name(at),
+                    WorkZero::Point { .. } => "point".into(),
+                },
+                origin_point: match x.zero() {
+                    WorkZero::Point { at } => Some(at),
+                    WorkZero::Stock { .. } => None,
+                },
                 margins: [x.margin.side, x.margin.top, x.margin.bottom],
+                stock_mode: if x.fixed_stock.is_some() { "fixed" } else { "margin" }.into(),
+                stock_size: x.fixed_stock.map(|f| f.size),
+                stock_place: x.fixed_stock.map(|f| place_name(f.place).to_string()),
                 stock,
                 operations,
                 error,
@@ -778,8 +940,7 @@ fn simulation_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         cmd,
         CamSimulation {
             setup,
-            origin: plan.frame.origin.map(|v| round(v, 4)),
-            flipped: plan.frame.flipped,
+            frame: frame_info(&plan.frame),
             stock_min: plan.stock_min.map(|v| round(v, 4)),
             stock_max: plan.stock_max.map(|v| round(v, 4)),
             operations,
@@ -954,14 +1115,99 @@ mod tests {
         assert!((low + 0.5).abs() < 1e-6, "{low}");
         // The stock: 3 mm around the block, 1 mm above it.
         assert_eq!(shown["stock"], json!([[-3.0, -3.0, 0.0], [63.0, 43.0, 11.0]]));
-        // Turned over, the cut ends past the stock's far side, now above it (1 mm of stock on top).
+        // Turned over, the cut ends past the stock's far side: the model's top, now on the table
+        // (the 1 mm of stock on top is on the spindle's side, the model's bottom).
         let id = setup["id"].as_u64().unwrap();
         s.execute("cam.setup", &json!({"id": id, "flipped": true})).unwrap();
         let flipped = s.execute("cam.toolpaths", &json!({"setup": id})).unwrap();
         let cuts: Vec<[f64; 3]> = serde_json::from_value::<Vec<Vec<[f64; 3]>>>(flipped["paths"][0]["cuts"].clone()).unwrap().concat();
         let high = cuts.iter().map(|p| p[2]).fold(f64::MIN, f64::max);
-        assert!((high - 11.5).abs() < 1e-6, "{high}");
+        assert!((high - 10.5).abs() < 1e-6, "{high}");
         assert!(s.execute("cam.toolpaths", &json!({"step": 0})).is_err());
+    }
+
+    #[test]
+    fn a_setup_takes_its_axes_from_the_face_on_the_table_and_its_origin_from_the_stock() {
+        let mut s = block();
+        s.execute("cam.tool", &json!({"number": 2, "diameter": 3.175, "flute_length": 50})).unwrap();
+        // The block's front face (model −Y) on the table: machine Z is the model's +Y, X stays X.
+        let setup = s.execute("cam.setup", &json!({"table": {"at": [30, 0, 5]}})).unwrap();
+        let id = setup["id"].as_u64().unwrap();
+        assert_eq!(setup["frame"]["z"], json!([0.0, 1.0, 0.0]), "{setup}");
+        assert_eq!(setup["frame"]["x"], json!([1.0, 0.0, 0.0]));
+        assert_eq!(setup["frame"]["y"], json!([0.0, 0.0, -1.0]));
+        // 40 mm tall now, 1 mm of stock on top; the origin at the top's centre.
+        assert_eq!(setup["stock"], json!([66.0, 16.0, 41.0]));
+        assert_eq!(setup["part_top"], json!(-1.0));
+        assert_eq!(setup["frame"]["origin"], json!([30.0, 41.0, 5.0]));
+        // The back face faces up: its outline is cut out down through the part.
+        let cut = s.execute("cam.contour", &json!({"tool": 2, "face": {"at": [30, 40, 5]}})).unwrap();
+        assert!((cut["operation"]["lowest"].as_f64().unwrap() + 41.5).abs() < 1e-6, "{cut}");
+        // The model's top is a wall in this setup, not a face to cut down to.
+        assert!(s.execute("cam.pocket", &json!({"tool": 2, "face": {"at": [10, 10, 10]}})).is_err());
+        // A corner of the stock's bottom as the origin, tried without a change.
+        let tried = s.execute("cam.setup", &json!({"id": id, "origin": "bottom_front_left", "dry_run": true})).unwrap();
+        assert_eq!(tried["frame"]["origin"], json!([-3.0, 0.0, 13.0]), "{tried}");
+        assert_eq!(tried["stock_min"], json!([0.0, 0.0, 0.0]));
+        let report = s.execute("cam.generate", &json!({"setup": id})).unwrap();
+        assert_eq!(report["setups"][0]["origin"], "top_center", "a dry run changes nothing");
+        // A vertex of the model as the origin.
+        let at_vertex = s.execute("cam.setup", &json!({"id": id, "origin_point": [60, 40, 10], "dry_run": true})).unwrap();
+        assert_eq!(at_vertex["frame"]["origin"], json!([60.0, 40.0, 10.0]));
+        // Machine X along the model's Z instead; along the table's normal it can't be.
+        let turned = s.execute("cam.setup", &json!({"id": id, "x_axis": [0, 0, 1], "dry_run": true})).unwrap();
+        assert_eq!(turned["stock"], json!([16.0, 66.0, 41.0]), "{turned}");
+        assert!(s.execute("cam.setup", &json!({"id": id, "x_axis": [0, 1, 0]})).is_err());
+        assert!(s.execute("cam.setup", &json!({"id": id, "x_axis": [1, 1, 0]})).is_err());
+        // A block of stock 70 × 20 × 45 with the part in its front left corner.
+        let fixed = s.execute("cam.setup", &json!({"id": id, "stock": "fixed", "stock_size": [70, 20, 45], "stock_place": "front_left"})).unwrap();
+        assert_eq!(fixed["stock"], json!([70.0, 20.0, 45.0]), "{fixed}");
+        assert_eq!(fixed["stock_min"], json!([-35.0, -10.0, -45.0]));
+        assert_eq!(fixed["part_top"], json!(-5.0));
+        // The part against the stock's left and front: origin = stock top centre at (35, 0).
+        assert_eq!(fixed["frame"]["origin"], json!([35.0, 45.0, 0.0]));
+        let report = s.execute("cam.generate", &json!({"setup": id})).unwrap();
+        let summary = &report["setups"][0];
+        assert_eq!(summary["stock_mode"], "fixed");
+        assert_eq!(summary["stock_place"], "front_left");
+        assert_eq!(summary["z_axis"], json!([0.0, 1.0, 0.0]));
+        assert!(s.execute("cam.setup", &json!({"id": id, "stock_size": [50, 20, 45]})).is_err(), "the part doesn't fit");
+        assert!(s.execute("cam.setup", &json!({"id": id, "stock_place": "middle"})).is_err());
+        assert!(s.execute("cam.setup", &json!({"id": id, "origin": "top_left"})).is_err());
+        // Back to margins, and the setup is as it was.
+        let back = s.execute("cam.setup", &json!({"id": id, "stock": "margin"})).unwrap();
+        assert_eq!(back["stock"], json!([66.0, 16.0, 41.0]));
+        // A face that doesn't face along a model axis can't sit on the table; a missing pick neither.
+        assert!(s.execute("cam.setup", &json!({"id": id, "table": {"at": [500, 500, 500]}})).is_err());
+    }
+
+    #[test]
+    fn an_older_setup_turned_over_reads_as_the_top_on_the_table() {
+        let mut s = block();
+        s.execute("cam.tool", &json!({"number": 2, "diameter": 3.175, "flute_length": 20})).unwrap();
+        let id = s.execute("cam.setup", &json!({})).unwrap()["id"].as_u64().unwrap();
+        {
+            let setup = s.doc_mut().cam.setups.iter_mut().find(|x| x.id == id).unwrap();
+            setup.axes = None;
+            setup.zero = None;
+            setup.flipped = true;
+            setup.origin = WorkOrigin::TopCorner;
+        }
+        let report = s.execute("cam.generate", &json!({"setup": id})).unwrap();
+        let summary = &report["setups"][0];
+        assert_eq!(summary["z_axis"], json!([0.0, 0.0, -1.0]), "{report}");
+        assert_eq!(summary["flipped"], true);
+        assert_eq!(summary["origin"], "top_front_left");
+        let sim = s.execute("cam.simulation", &json!({"setup": id})).unwrap();
+        // Machine Y runs along the model's −Y; the front left of the turned-over stock is the
+        // model's (−3, 43), its top 1 mm below the model's bottom.
+        assert_eq!(sim["frame"]["y"], json!([0.0, -1.0, 0.0]), "{sim}");
+        assert_eq!(sim["frame"]["origin"], json!([-3.0, 43.0, -1.0]));
+        // Changing it saves the new form, meaning the same.
+        let again = s.execute("cam.setup", &json!({"id": id, "margin_side": 3})).unwrap();
+        assert_eq!(again["frame"]["origin"], json!([-3.0, 43.0, -1.0]));
+        let setup = s.doc.cam.setup(id).unwrap();
+        assert!(!setup.flipped && setup.axes.is_some() && setup.zero.is_some());
     }
 
     #[test]

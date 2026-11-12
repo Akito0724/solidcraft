@@ -4,9 +4,11 @@
 //!
 //! An operation names the model geometry it cuts the way a sketch's projected link does: a body
 //! and a point on the face or edge ([`GeoPick`]). The face's boundary is read from the model's
-//! exact edges by projection onto the XY plane ([`crate::project::resolve`]), so arcs stay arcs.
-//! A setup's stock is the body's exact bounds grown by margins. The model is Z up; a setup either
-//! cuts from above or, `flipped`, has the part turned over to cut its bottom.
+//! exact edges by projection onto the setup's machine XY plane ([`crate::project::resolve`]), so
+//! arcs stay arcs. A setup puts one of the part's faces on the table: the machine's Z comes out of
+//! it, and its X and Y run along the model's axes. Its stock is the part's exact box along those
+//! axes grown by margins, or a block of a given size; the work origin is a point of that box or of
+//! the model.
 
 use serde::{Deserialize, Serialize};
 use solidcore_record::{Plane, Vec3};
@@ -64,6 +66,32 @@ pub enum WorkOrigin {
     TopCorner,
 }
 
+/// Which way the machine's axes run through the model: Z out of the face on the table, X
+/// square to it (Y follows, right-handed). Unit vectors in model coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SetupAxes {
+    pub x: [f64; 3],
+    pub z: [f64; 3],
+}
+
+/// The work origin: a point of the stock's box (each of `at` −1, 0 or 1 along the machine's X,
+/// Y and Z: the low side, the middle, the high side), or a point of the model.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkZero {
+    Stock { at: [i8; 3] },
+    Point { at: [f64; 3] },
+}
+
+/// A stock of a given size, the part placed in it: its bottom on the stock's bottom, and across
+/// X and Y at `place` (−1, 0 or 1 each: against the low side, centred, against the high side).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FixedStock {
+    pub size: [f64; 3],
+    #[serde(default)]
+    pub place: [i8; 2],
+}
+
 /// How much bigger than the part the stock is (mm).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StockMargin {
@@ -89,9 +117,23 @@ pub struct CamSetup {
     /// The body machined.
     pub body: String,
     pub material: Material,
+    /// The face on the machine's table (a point on it), when one was picked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<GeoPick>,
+    /// The machine's axes. Default: the model's own, or (an older design's `flipped`) turned over
+    /// about X.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub axes: Option<SetupAxes>,
+    /// The work origin. Default: an older design's `origin`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zero: Option<WorkZero>,
+    /// A stock of a given size instead of the part with margins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_stock: Option<FixedStock>,
+    /// An older design's work origin (`zero` replaces it).
     #[serde(default)]
     pub origin: WorkOrigin,
-    /// The part turned over to cut its bottom.
+    /// An older design's part turned over to cut its bottom (`axes` replaces it).
     #[serde(default)]
     pub flipped: bool,
     #[serde(default)]
@@ -100,6 +142,21 @@ pub struct CamSetup {
     pub safe_z: f64,
     #[serde(default = "default_retract")]
     pub retract: f64,
+}
+
+impl CamSetup {
+    /// The machine's X and Z in the model.
+    pub fn axes(&self) -> SetupAxes {
+        self.axes.unwrap_or(SetupAxes { x: [1.0, 0.0, 0.0], z: if self.flipped { [0.0, 0.0, -1.0] } else { [0.0, 0.0, 1.0] } })
+    }
+
+    /// The work origin.
+    pub fn zero(&self) -> WorkZero {
+        self.zero.unwrap_or(match self.origin {
+            WorkOrigin::TopCenter => WorkZero::Stock { at: [0, 0, 1] },
+            WorkOrigin::TopCorner => WorkZero::Stock { at: [-1, -1, 1] },
+        })
+    }
 }
 
 fn default_safe_z() -> f64 {
@@ -192,26 +249,72 @@ impl Document {
         let setup = self.cam.setup(id).ok_or_else(|| DocError::Unknown(format!("setup {id}")))?;
         let body = st.body(&setup.body).ok_or_else(|| DocError::Invalid(format!("{}: there is no body `{}`", setup.name, setup.body)))?;
         let b = body.body.exact_bounds().map_err(|e| DocError::Invalid(format!("{}: {e}", setup.name)))?;
-        let m = setup.margin;
-        if ![m.side, m.top, m.bottom].iter().all(|v| v.is_finite() && *v >= 0.0 && *v <= 1000.0) {
-            return Err(DocError::Invalid(format!("{}: the stock margins must be between 0 and 1000 mm", setup.name)));
-        }
-        let lo = [b.min.x - m.side, b.min.y - m.side, b.min.z - m.bottom];
-        let hi = [b.max.x + m.side, b.max.y + m.side, b.max.z + m.top];
-        let up_z = if setup.flipped { lo[2] } else { hi[2] };
-        let origin = match (setup.origin, setup.flipped) {
-            (WorkOrigin::TopCenter, _) => [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0, up_z],
-            (WorkOrigin::TopCorner, false) => [lo[0], lo[1], up_z],
-            // Turned over about X, the model's far side is the machine's front.
-            (WorkOrigin::TopCorner, true) => [lo[0], hi[1], up_z],
+        let axes = setup.axes();
+        // The machine's axes about the model's origin first; the work origin moves it after.
+        let turned =
+            Frame::new([0.0; 3], axes.x, axes.z).ok_or_else(|| DocError::Invalid(format!("{}: the setup's axes are not square", setup.name)))?;
+        // The part's box along the machine's axes (they run along the model's, so it is exact).
+        let corners: Vec<[f64; 3]> = (0..8)
+            .map(|k| {
+                let c = [
+                    if k & 1 == 0 { b.min.x } else { b.max.x },
+                    if k & 2 == 0 { b.min.y } else { b.max.y },
+                    if k & 4 == 0 { b.min.z } else { b.max.z },
+                ];
+                turned.to_machine(c)
+            })
+            .collect();
+        let part_lo = [0, 1, 2].map(|i| corners.iter().map(|c| c[i]).fold(f64::MAX, f64::min));
+        let part_hi = [0, 1, 2].map(|i| corners.iter().map(|c| c[i]).fold(f64::MIN, f64::max));
+        let (lo, hi) = match setup.fixed_stock {
+            None => {
+                let m = setup.margin;
+                if ![m.side, m.top, m.bottom].iter().all(|v| v.is_finite() && *v >= 0.0 && *v <= 1000.0) {
+                    return Err(DocError::Invalid(format!("{}: the stock margins must be between 0 and 1000 mm", setup.name)));
+                }
+                ([part_lo[0] - m.side, part_lo[1] - m.side, part_lo[2] - m.bottom], [part_hi[0] + m.side, part_hi[1] + m.side, part_hi[2] + m.top])
+            }
+            Some(f) => {
+                let part = [0, 1, 2].map(|i| part_hi[i] - part_lo[i]);
+                if !f.size.iter().all(|v| v.is_finite() && *v > 0.0 && *v <= 10_000.0) {
+                    return Err(DocError::Invalid(format!("{}: the stock's size must be between 0 and 10000 mm", setup.name)));
+                }
+                if (0..3).any(|i| f.size[i] < part[i] - 1e-6) {
+                    return Err(DocError::Invalid(format!(
+                        "{}: the part ({:.1} × {:.1} × {:.1} mm) doesn't fit in the stock",
+                        setup.name, part[0], part[1], part[2]
+                    )));
+                }
+                let mut lo = [0.0; 3];
+                for i in 0..2 {
+                    let spare = f.size[i] - part[i];
+                    // −1: the part against the stock's low side, 1: against its high side.
+                    lo[i] = part_lo[i] - spare * (1.0 + f64::from(f.place[i].clamp(-1, 1))) / 2.0;
+                }
+                lo[2] = part_lo[2];
+                (lo, [lo[0] + f.size[0], lo[1] + f.size[1], lo[2] + f.size[2]])
+            }
         };
-        let frame = Frame { origin, flipped: setup.flipped };
-        let corners = [frame.to_machine(lo), frame.to_machine(hi)];
-        let stock_min = [0, 1, 2].map(|i| corners[0][i].min(corners[1][i]));
-        let stock_max = [0, 1, 2].map(|i| corners[0][i].max(corners[1][i]));
-        let part_top = frame.z_to_machine(if setup.flipped { b.min.z } else { b.max.z });
-        let part_bottom = frame.z_to_machine(if setup.flipped { b.max.z } else { b.min.z });
-        let clearance = Clearance { safe_z: setup.safe_z, retract: setup.retract };
+        let zero = match setup.zero() {
+            WorkZero::Stock { at } => [0, 1, 2].map(|i| match at[i].clamp(-1, 1) {
+                -1 => lo[i],
+                1 => hi[i],
+                _ => (lo[i] + hi[i]) / 2.0,
+            }),
+            WorkZero::Point { at } => {
+                if !at.iter().all(|v| v.is_finite()) {
+                    return Err(DocError::Invalid(format!("{}: the work origin is not a point", setup.name)));
+                }
+                turned.to_machine(at)
+            }
+        };
+        let frame = Frame { origin: turned.to_model(zero), ..turned };
+        let stock_min = [0, 1, 2].map(|i| lo[i] - zero[i]);
+        let stock_max = [0, 1, 2].map(|i| hi[i] - zero[i]);
+        let part_top = part_hi[2] - zero[2];
+        let part_bottom = part_lo[2] - zero[2];
+        // Clear of the stock's top, wherever the origin is.
+        let clearance = Clearance { safe_z: stock_max[2] + setup.safe_z, retract: setup.retract };
         let plan = CamPlan { frame, clearance, stock_min, stock_max, part_top, part_bottom, jobs: Vec::new() };
         let jobs = self
             .cam
@@ -228,9 +331,7 @@ impl Document {
         let cutting = op.cutting.unwrap_or_else(|| Cutting::starting(setup.material, &tool));
         let frame = &plan.frame;
         let body = st.body(&setup.body).ok_or_else(|| DocError::Invalid(format!("there is no body `{}`", setup.body)))?;
-        // Down the tool's axis, in the model: −Z, or +Z for a part turned over.
-        let down = if setup.flipped { 1.0 } else { -1.0 };
-        let stock_floor = frame.z_to_model(plan.stock_min[2]);
+        let top = plan.stock_max[2];
         // Where the cut's bottom goes: the model's bottom for it, moved by the offset. Only a cut
         // through the part (`base` None: no material under it) may go below; by default it goes
         // BREAKTHROUGH below the stock.
@@ -251,28 +352,24 @@ impl Document {
         let operation = match &op.spec {
             OpSpec::Face { offset } => {
                 let bottom = bottom(Some(plan.part_top), *offset)?;
-                if bottom >= -1e-9 {
+                if bottom >= top - 1e-9 {
                     return Err(DocError::Invalid("there is nothing to face: the stock has no margin above the part".into()));
                 }
                 Operation::Face(FaceOp {
                     min: (plan.stock_min[0], plan.stock_min[1]),
                     max: (plan.stock_max[0], plan.stock_max[1]),
-                    depths: Depths { top: 0.0, bottom },
+                    depths: Depths { top, bottom },
                 })
             }
             OpSpec::Pocket { face, offset } => {
-                let (region, z, up) = self.cam_face(st, face)?;
-                if up == setup.flipped {
+                let (region, z, up) = self.cam_face(st, frame, face)?;
+                if !up {
                     return Err(DocError::Invalid("pick the pocket's floor, a face that faces up in this setup".into()));
                 }
-                let region = Region {
-                    outer: frame.loop_to_machine(&region.outer),
-                    islands: region.islands.iter().map(|l| frame.loop_to_machine(l)).collect(),
-                };
-                Operation::Pocket(PocketOp { region, depths: Depths { top: 0.0, bottom: bottom(Some(frame.z_to_machine(z)), *offset)? } })
+                Operation::Pocket(PocketOp { region, depths: Depths { top, bottom: bottom(Some(z), *offset)? } })
             }
             OpSpec::Contour { face, side, offset, tabs } => {
-                let (region, z, _) = self.cam_face(st, face)?;
+                let (region, z, _) = self.cam_face(st, frame, face)?;
                 // Where the tool sweeps: beside the outline on its side, two radii wide.
                 let reach = match side {
                     Side::Outside => [-0.05, -radius, 0.05 - 2.0 * radius],
@@ -285,11 +382,11 @@ impl Document {
                         probes.extend(along(&l, 24));
                     }
                 }
-                let base = first_material(&body.body, &probes, z, stock_floor, down)?;
+                let base = first_material(&body.body, frame, &probes, z, plan.stock_min[2])?;
                 Operation::Contour(ContourOp {
-                    profile: frame.loop_to_machine(&region.outer),
+                    profile: region.outer,
                     side: *side,
-                    depths: Depths { top: 0.0, bottom: bottom(base.map(|m| frame.z_to_machine(m)), *offset)? },
+                    depths: Depths { top, bottom: bottom(base, *offset)? },
                     tabs: *tabs,
                 })
             }
@@ -302,36 +399,36 @@ impl Document {
                 let mut base: Option<f64> = None;
                 let mut through = true;
                 for e in edges {
-                    let ((cx, cy), r) = self.cam_circle(st, e)?;
-                    let m = frame.to_machine([cx, cy, 0.0]);
-                    points.push((m[0], m[1]));
+                    let ((cx, cy), r) = self.cam_circle(st, frame, e)?;
+                    points.push((cx, cy));
                     let a = 0.7 * r.min(radius);
                     let probes = [(cx, cy), (cx + a, cy), (cx - a, cy), (cx, cy + a), (cx, cy - a)];
-                    if let Some(floor) = first_material(&body.body, &probes, e.at[2], stock_floor, down)? {
-                        let floor = frame.z_to_machine(floor);
+                    if let Some(floor) = first_material(&body.body, frame, &probes, frame.to_machine(e.at)[2], plan.stock_min[2])? {
                         through = false;
                         base = Some(base.map_or(floor, |b: f64| b.max(floor)));
                     }
                 }
                 let base = if through { None } else { base };
-                Operation::Drill(DrillOp { points, depths: Depths { top: 0.0, bottom: bottom(base, *offset)? }, peck: *peck })
+                Operation::Drill(DrillOp { points, depths: Depths { top, bottom: bottom(base, *offset)? }, peck: *peck })
             }
         };
         Ok(Job { name: op.name.clone(), operation, tool, cutting })
     }
 
-    /// The face at `pick`: its boundary seen from above (outer loop and the holes in it), its
-    /// height and whether it faces up. Refused for a face that isn't flat and level.
-    pub fn cam_face(&self, st: &ModelState, pick: &GeoPick) -> Result<(Region, f64, bool)> {
+    /// The face at `pick` seen down the machine's Z (`frame`): its boundary in machine XY (outer
+    /// loop and the holes in it), its machine height and whether it faces up. Refused for a face
+    /// that isn't flat and square to the machine's Z.
+    pub fn cam_face(&self, st: &ModelState, frame: &Frame, pick: &GeoPick) -> Result<(Region, f64, bool)> {
         let body = st.body(&pick.body).ok_or_else(|| DocError::Invalid(format!("there is no body `{}`", pick.body)))?;
         let at = finite_point(pick.at)?;
         let (vals, _) = self.param_values();
         let src = LinkSource::Face { body: pick.body.clone(), at };
-        let r = crate::project::resolve(self, &vals, st, &Plane::XY, LinkKind::Project, &src)?;
+        let r = crate::project::resolve(self, &vals, st, &machine_plane(frame), LinkKind::Project, &src)?;
         let index = r.face_index.ok_or_else(|| DocError::Invalid("the pick is not on a face".into()))?;
         let plane = body.body.planar_face(index).ok_or_else(|| DocError::Invalid("the face is not flat".into()))?;
         let n = plane.normal();
-        if n.z.abs() < 1.0 - 1e-6 {
+        let up = n.x * frame.z[0] + n.y * frame.z[1] + n.z * frame.z[2];
+        if up.abs() < 1.0 - 1e-6 {
             return Err(DocError::Invalid("the face is not level: it must face straight up or down".into()));
         }
         let loops = chain(&r.geom)?;
@@ -339,16 +436,18 @@ impl Document {
         loops.sort_by(|a, b| b.area().abs().total_cmp(&a.area().abs()));
         let mut it = loops.into_iter();
         let outer = it.next().ok_or_else(|| DocError::Invalid("the face has no boundary".into()))?;
-        Ok((Region { outer: outer.oriented(true), islands: it.map(|l| l.oriented(false)).collect() }, plane.origin.z, n.z > 0.0))
+        let z = frame.to_machine([plane.origin.x, plane.origin.y, plane.origin.z])[2];
+        Ok((Region { outer: outer.oriented(true), islands: it.map(|l| l.oriented(false)).collect() }, z, up > 0.0))
     }
 
-    /// The circle of the edge at `pick`, seen from above: its centre and radius.
-    pub fn cam_circle(&self, st: &ModelState, pick: &GeoPick) -> Result<((f64, f64), f64)> {
+    /// The circle of the edge at `pick` seen down the machine's Z: its centre (machine XY) and
+    /// radius.
+    pub fn cam_circle(&self, st: &ModelState, frame: &Frame, pick: &GeoPick) -> Result<((f64, f64), f64)> {
         st.body(&pick.body).ok_or_else(|| DocError::Invalid(format!("there is no body `{}`", pick.body)))?;
         let at = finite_point(pick.at)?;
         let (vals, _) = self.param_values();
         let src = LinkSource::Edge { body: pick.body.clone(), at };
-        let r = crate::project::resolve(self, &vals, st, &Plane::XY, LinkKind::Project, &src)?;
+        let r = crate::project::resolve(self, &vals, st, &machine_plane(frame), LinkKind::Project, &src)?;
         for g in &r.geom {
             match g {
                 LinkGeom::Circle(c, radius) => return Ok(((c.x, c.y), *radius)),
@@ -358,6 +457,48 @@ impl Document {
         }
         Err(DocError::Invalid("the edge is not a circle seen from above: pick a hole's round edge".into()))
     }
+
+    /// The machine axes a face on the table gives: Z out of the table through the part (against
+    /// the face's outward normal), and X the model axis nearest the model's X square to it. The
+    /// face must be flat and face along one of the model's axes.
+    pub fn cam_table_axes(&self, st: &ModelState, pick: &GeoPick) -> Result<SetupAxes> {
+        let body = st.body(&pick.body).ok_or_else(|| DocError::Invalid(format!("there is no body `{}`", pick.body)))?;
+        let at = finite_point(pick.at)?;
+        let (vals, _) = self.param_values();
+        let src = LinkSource::Face { body: pick.body.clone(), at };
+        let r = crate::project::resolve(self, &vals, st, &Plane::XY, LinkKind::Project, &src)?;
+        let index = r.face_index.ok_or_else(|| DocError::Invalid("the pick is not on a face".into()))?;
+        let plane = body.body.planar_face(index).ok_or_else(|| DocError::Invalid("the face is not flat".into()))?;
+        let n = plane.normal();
+        let z = axis_along([-n.x, -n.y, -n.z])
+            .ok_or_else(|| DocError::Invalid("the face on the table must face along one of the model's axes".into()))?;
+        let x = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+            .into_iter()
+            .find(|a: &[f64; 3]| (a[0] * z[0] + a[1] * z[1] + a[2] * z[2]).abs() < 0.5)
+            .unwrap_or([1.0, 0.0, 0.0]);
+        Ok(SetupAxes { x, z })
+    }
+}
+
+/// The model axis (±X, ±Y, ±Z) `v` runs along, when it runs along one.
+pub fn axis_along(v: [f64; 3]) -> Option<[f64; 3]> {
+    let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if !n.is_finite() || n < 1e-12 {
+        return None;
+    }
+    (0..3).find(|&i| (v[i] / n).abs() > 1.0 - 1e-6).map(|i| {
+        let mut a = [0.0; 3];
+        if let Some(c) = a.get_mut(i) {
+            *c = v[i].signum();
+        }
+        a
+    })
+}
+
+/// The machine's XY plane at the work origin, for projecting the model into machine XY.
+fn machine_plane(frame: &Frame) -> Plane {
+    let v = |a: [f64; 3]| Vec3::new(a[0], a[1], a[2]);
+    Plane { origin: v(frame.origin), x: v(frame.x), y: v(frame.y) }
 }
 
 impl Document {
@@ -433,26 +574,29 @@ fn along(l: &Loop, n: usize) -> Vec<(f64, f64)> {
     out
 }
 
-/// Going down (`down`: the sign of the model's Z) from the face at `from` to `to` over each of
-/// `probes` (model XY), the highest point where the body's material begins: the bottom a cut
-/// there may reach (`from` itself where the material is right under the face). `None` when there
-/// is none down to `to` (the cut may go through).
-fn first_material(body: &solidcraft_kernel::Body, probes: &[(f64, f64)], from: f64, to: f64, down: f64) -> Result<Option<f64>> {
+/// Going down the machine's Z from the face at height `from` to `to` over each of `probes`
+/// (machine XY), the highest height where the body's material begins: the bottom a cut there may
+/// reach (`from` itself where the material is right under the face). `None` when there is none
+/// down to `to` (the cut may go through).
+fn first_material(body: &solidcraft_kernel::Body, frame: &Frame, probes: &[(f64, f64)], from: f64, to: f64) -> Result<Option<f64>> {
     const STEP: f64 = 0.5;
-    let inside = |x: f64, y: f64, z: f64| matches!(body.classify_point(Vec3::new(x, y, z)), Ok(solidcraft_kernel::PointClass::Inside));
-    let span = (to - from) * down;
+    let inside = |x: f64, y: f64, z: f64| {
+        let m = frame.to_model([x, y, z]);
+        matches!(body.classify_point(Vec3::new(m[0], m[1], m[2])), Ok(solidcraft_kernel::PointClass::Inside))
+    };
+    let span = from - to;
     if !span.is_finite() || span <= 0.0 {
         return Ok(None);
     }
     let steps = ((span / STEP).ceil() as usize).clamp(1, 4000);
     let mut best: Option<f64> = None;
     for &(x, y) in probes.iter().take(256) {
-        // Already past a higher floor found elsewhere: nothing here can raise it.
         let mut above = from;
         for k in 0..=steps {
             // Just under the face first, then every STEP.
-            let z = from + down * if k == 0 { 0.05 } else { span.min(k as f64 * STEP) };
-            if best.is_some_and(|b| (z - b) * down > 0.0) {
+            let z = from - if k == 0 { 0.05 } else { span.min(k as f64 * STEP) };
+            // Already below a higher floor found elsewhere: nothing here can raise it.
+            if best.is_some_and(|b| z < b) {
                 break;
             }
             if inside(x, y, z) {
@@ -466,8 +610,7 @@ fn first_material(body: &solidcraft_kernel::Body, probes: &[(f64, f64)], from: f
                         hi = mid;
                     }
                 }
-                let floor = hi;
-                best = Some(best.map_or(floor, |b| if (floor - b) * down < 0.0 { floor } else { b }));
+                best = Some(best.map_or(hi, |b| b.max(hi)));
                 break;
             }
             above = z;

@@ -46,8 +46,8 @@ pub struct CamToolsResult {
     pub param_warnings: Vec<String>,
 }
 
-/// Make a setup (no `id`) or change one: the body machined, the material, the work origin,
-/// whether the part is turned over, and the stock around it.
+/// Make a setup (no `id`) or change one: the body machined, the material, the face on the
+/// machine's table (machine Z comes out of it), the machine's X, the work origin and the stock.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct CamSetupParams {
@@ -62,12 +62,39 @@ pub struct CamSetupParams {
     /// `wood` (default), `acrylic` or `aluminum`: the starting cutting data.
     #[serde(default)]
     pub material: Option<String>,
-    /// `top_center` (default) or `top_corner` (front left), on the stock's upward face.
+    /// The face that sits on the machine's table: a flat face facing along one of the model's
+    /// axes. Machine Z comes out of it through the part; machine X is set to the nearest model
+    /// axis square to it unless `x_axis` is given.
+    #[serde(default)]
+    pub table: Option<CamPickParam>,
+    /// Machine X as a model axis, e.g. [0, -1, 0]: square to machine Z.
+    #[serde(default)]
+    pub x_axis: Option<[f64; 3]>,
+    /// The work origin, a point of the stock's box in machine terms: `top_center` (default),
+    /// `bottom_center`, or a corner `top_front_left`… `bottom_back_right` (front: machine −Y,
+    /// left: machine −X; `top_corner` is `top_front_left`).
     #[serde(default)]
     pub origin: Option<String>,
-    /// Turn the part over to cut its bottom.
+    /// The work origin at a point of the model instead (a vertex), model coordinates.
+    #[serde(default)]
+    pub origin_point: Option<[f64; 3]>,
+    /// An older form: turn the part over about X (the model's top on the table).
     #[serde(default)]
     pub flipped: Option<bool>,
+    /// `margin` (the part grown by the margins) or `fixed` (a block of `stock_size`).
+    #[serde(default)]
+    pub stock: Option<String>,
+    /// The fixed stock's size along machine X, Y, Z (mm). Default: the stock as it is now.
+    #[serde(default)]
+    pub stock_size: Option<[f64; 3]>,
+    /// Where the part sits in a fixed stock seen from above: `center` (default), `front_left`,
+    /// `front_right`, `back_left`, `back_right`, `front`, `back`, `left` or `right`. Its bottom is
+    /// on the stock's bottom.
+    #[serde(default)]
+    pub stock_place: Option<String>,
+    /// Work the setup out and report it without changing the design (a preview).
+    #[serde(default)]
+    pub dry_run: Option<bool>,
     /// Stock beyond the part on each side (mm). Default 3.
     #[serde(default)]
     pub margin_side: Option<f64>,
@@ -95,9 +122,23 @@ pub struct CamSetupResult {
     pub stock: [f64; 3],
     /// The part's top in machine Z: below 0 when the stock has a margin above it.
     pub part_top: f64,
+    /// The machine frame in the model.
+    pub frame: CamFrame,
+    /// The stock's corners in machine coordinates (mm).
+    pub stock_min: [f64; 3],
+    pub stock_max: [f64; 3],
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
+}
+
+/// A setup's machine frame: the work origin and the machine's X, Y and Z, in model coordinates.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CamFrame {
+    pub origin: [f64; 3],
+    pub x: [f64; 3],
+    pub y: [f64; 3],
+    pub z: [f64; 3],
 }
 
 /// A face or edge of the model: a point on it, and its body (default: the setup's).
@@ -313,11 +354,28 @@ pub struct CamSetupSummary {
     pub body: String,
     /// `wood`, `acrylic` or `aluminum`.
     pub material: String,
+    /// Machine Z runs down the model's Z: the model's top is on the table.
     pub flipped: bool,
-    /// `top_center` or `top_corner`.
+    /// The point on the face on the table, when one was picked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<[f64; 3]>,
+    /// Machine X and Z as model axes.
+    pub x_axis: [f64; 3],
+    pub z_axis: [f64; 3],
+    /// The work origin: a point of the stock's box (`top_center`, `bottom_front_left`…) or
+    /// `point`, a point of the model (`origin_point`).
     pub origin: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_point: Option<[f64; 3]>,
     /// The stock beyond the part: on each side, above and below (mm).
     pub margins: [f64; 3],
+    /// `margin` or `fixed`.
+    pub stock_mode: String,
+    /// A fixed stock's size and where the part sits in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stock_size: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stock_place: Option<String>,
     /// The stock's size: X, Y, Z (mm).
     pub stock: [f64; 3],
     pub operations: Vec<CamOpSummary>,
@@ -439,10 +497,8 @@ pub struct CamSimSteps {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct CamSimulation {
     pub setup: u64,
-    /// The work origin in model coordinates.
-    pub origin: [f64; 3],
-    /// The part is turned over (machine Y and Z are the model's −Y and −Z).
-    pub flipped: bool,
+    /// The machine frame in the model.
+    pub frame: CamFrame,
     /// The stock's corners in machine coordinates (mm).
     pub stock_min: [f64; 3],
     pub stock_max: [f64; 3],

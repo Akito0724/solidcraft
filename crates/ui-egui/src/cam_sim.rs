@@ -38,7 +38,8 @@ impl Sim {
     /// A playback from `cam.simulation`'s reply, the stock uncut and the tool at its first point.
     pub fn from_reply(v: &Value, revision: u64) -> Option<Sim> {
         let arr3 = |v: &Value| -> Option<[f64; 3]> { Some([v.get(0)?.as_f64()?, v.get(1)?.as_f64()?, v.get(2)?.as_f64()?]) };
-        let frame = Frame { origin: arr3(&v["origin"])?, flipped: v["flipped"].as_bool().unwrap_or(false) };
+        let f = &v["frame"];
+        let frame = Frame { origin: arr3(&f["origin"])?, x: arr3(&f["x"])?, y: arr3(&f["y"])?, z: arr3(&f["z"])? };
         let stock = Stock::new(arr3(&v["stock_min"])?, arr3(&v["stock_max"])?, 0.25)?;
         let ops: Vec<(String, Playback)> = v["operations"]
             .as_array()

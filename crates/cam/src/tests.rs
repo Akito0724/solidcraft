@@ -210,16 +210,20 @@ fn programs_split_where_the_tool_changes() {
 }
 
 #[test]
-fn turning_the_part_over_mirrors_y_and_keeps_arcs_round() {
-    let f = Frame { origin: [10.0, 0.0, 20.0], flipped: true };
+fn a_frame_carries_points_both_ways_and_stays_right_handed() {
+    // Turned over about X: the model's top faces the table.
+    let f = Frame::new([10.0, 0.0, 20.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]).unwrap();
+    assert_eq!(f.y, [0.0, -1.0, 0.0]);
     assert_eq!(f.to_machine([10.0, 5.0, 20.0]), [0.0, -5.0, 0.0]);
     assert_eq!(f.to_model(f.to_machine([3.0, 4.0, 5.0])), [3.0, 4.0, 5.0]);
-    assert_eq!(f.z_to_machine(0.0), 20.0);
-    let circle = Loop::circle(10.0, 0.0, 5.0);
-    let m = f.loop_to_machine(&circle);
-    // Mirrored, the counter-clockwise circle runs clockwise, and stays a circle of radius 5.
-    assert!(!m.is_ccw());
-    assert!((m.area().abs() - std::f64::consts::PI * 25.0).abs() < 1e-6);
+    // On its side: the model's −Y face on the table, machine X along the model's X.
+    let side = Frame::new([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]).unwrap();
+    assert_eq!(side.y, [0.0, 0.0, -1.0]);
+    assert_eq!(side.to_machine([2.0, 3.0, 4.0]), [2.0, -4.0, 3.0]);
+    assert_eq!(side.dir_to_model([0.0, 0.0, 1.0]), [0.0, 1.0, 0.0]);
+    // Axes that aren't square, or are zero, make no frame.
+    assert!(Frame::new([0.0; 3], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]).is_none());
+    assert!(Frame::new([0.0; 3], [0.0; 3], [0.0, 0.0, 1.0]).is_none());
 }
 
 #[test]
