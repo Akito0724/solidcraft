@@ -296,10 +296,10 @@
     "cam.panel.table_hint": "Click the face that sits on the machine's table: Z comes out of it. Drag the X or Y arrow to turn the axes a quarter turn at a time.",
     "cam.panel.vertex_hint": "Click a vertex of the model for the work origin.",
     "cam.panel.stock_size": "Stock {mm} mm",
-    "cam.error.table_axis": "The face on the table must face along one of the model's axes.",
-    "cam.error.stock_too_small": "The part ({x} × {y} × {z} mm) doesn't fit in the stock.",
-    "cam.error.stock_size": "The stock's size must be between 0 and 10000 mm.",
-    "cam.error.axes": "The setup's axes are not square to each other."
+    "cam.error.table_axis": "the face on the table must face along one of the model's axes",
+    "cam.error.stock_too_small": "the part ({x} × {y} × {z} mm) doesn't fit in the stock",
+    "cam.error.stock_size": "the stock's size must be between 0 and 10000 mm",
+    "cam.error.axes": "the setup's axes are not square"
   },
   "he": {
     "Machining": "עיבוד",

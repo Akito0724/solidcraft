@@ -664,7 +664,7 @@ pub fn setup_handles(app: &mut SolveApp, ui: &mut egui::Ui, proj: &crate::viewpo
     for (k, (tip, color)) in tips.into_iter().take(2).enumerate() {
         painter.circle(tip, 6.0, t.overlay, egui::Stroke::new(2.0, color));
         let rect = egui::Rect::from_center_size(tip, egui::Vec2::splat(18.0));
-        let response = ui.interact(rect, egui::Id::new(("sc_cam_axis", k)), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+        let response = ui.interact(rect, egui::Id::unique(("sc_cam_axis", k)), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
         crate::scenario::publish_handle(if k == 0 { "cam:axis:x" } else { "cam:axis:y" }, rect.center());
         if response.drag_started() {
             d.axis_drag = Some(k);
@@ -856,7 +856,6 @@ const MESSAGES: &[(&str, &str)] = &[
     ("the face on the table must face along one of the model's axes", "cam.error.table_axis"),
     ("the part ({x} × {y} × {z} mm) doesn't fit in the stock", "cam.error.stock_too_small"),
     ("the stock's size must be between 0 and 10000 mm", "cam.error.stock_size"),
-    ("`stock_size` must be between 0 and 10000 mm along each axis", "cam.error.stock_size"),
     ("the setup's axes are not square", "cam.error.axes"),
 ];
 
