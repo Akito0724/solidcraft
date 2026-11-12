@@ -4,7 +4,7 @@
 | Layer | Crates | Role |
 |---|---|---|
 | L0 | `geom` | vectors, planes, profiles, meshes and their measures |
-| L1 | `sketch`, `kernel`, `render`, `dynamics`, `cam` | constraint solver and profiles; the B-rep kernel boundary (the vendored `solidcore`); view math and the headless scene description; multibody dynamics (rigid bodies, joints, forces, time integration); 2.5D toolpaths and GRBL G-code from 2D profiles |
+| L1 | `sketch`, `kernel`, `render`, `dynamics`, `cam`, `camkit` | constraint solver and profiles; the B-rep kernel boundary (the vendored `solidcore`); view math and the headless scene description; multibody dynamics (rigid bodies, joints, forces, time integration); 2.5D toolpaths and GRBL G-code from 2D profiles; a manufacturing toolkit (leads and entries, adaptive clearing, 3-axis surface milling, machining time, setup sheets, G-code simulation) |
 | L2 | `doc` | parameters, expressions, the feature timeline and its incremental evaluation |
 | L3 | `io` | design files, STL/OBJ/STEP/3MF export, STEP and 3MF/STL/OBJ/glTF import features |
 | L4 | `engine` | the session and the command registry (everything is a command) |

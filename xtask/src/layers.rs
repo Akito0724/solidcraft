@@ -58,6 +58,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("kernel", Class::Layer(1)),
     // 2.5D toolpaths and G-code from 2D profiles (no workspace dependencies)
     ("cam", Class::Layer(1)),
+    // krzim's CAM toolkit, kept as its own crate: toolpaths, timing and G-code checks (geom only)
+    ("camkit", Class::Layer(1)),
     ("render", Class::Layer(1)),
     // multibody dynamics (rigid bodies, joints, forces, time integration; geom only)
     ("dynamics", Class::Layer(1)),

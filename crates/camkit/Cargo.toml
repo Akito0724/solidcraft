@@ -1,0 +1,21 @@
+[package]
+name = "solidcraft-camkit"
+description = "SolidCraft manufacturing toolkit (from krzim's CAM pull requests): leads and entries, adaptive clearing, 3-axis surface milling, machining time, setup sheets and G-code simulation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+solidcore-record = { workspace = true }
+solidcraft-geom = { workspace = true }
+solidcraft-profile = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_path_to_error = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

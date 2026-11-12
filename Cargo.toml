@@ -23,6 +23,7 @@ solidcraft-profile = { path = "crates/profile" }
 solidcraft-sketch = { path = "crates/sketch" }
 solidcraft-kernel = { path = "crates/kernel" }
 solidcraft-cam = { path = "crates/cam" }
+solidcraft-camkit = { path = "crates/camkit" }
 solidcraft-smlib = { path = "crates/smlib" }
 solidcraft-step = { path = "crates/step" }
 solidcraft-render = { path = "crates/render" }
