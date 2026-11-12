@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use serde_json::Value;
-use solidcraft_cam::{Cutting, Material, Side, Tabs, Tool, ToolKind, Toolpath};
+use solidcraft_cam::{Approach, Cutting, Entry, Finish, Material, Side, Tabs, Tool, ToolKind, Toolpath};
 use solidcraft_doc::cam::{CamOperation, CamSetup, FixedStock, GeoPick, OpSpec, SetupAxes, StockMargin, WorkOrigin, WorkZero, axis_along};
 
 use super::CommandSpec;
@@ -480,7 +480,7 @@ fn toolpath(s: &Session, id: u64) -> std::result::Result<Toolpath, String> {
     let st = s.model.state();
     let plan = s.doc.cam_plan(&st, op.setup).map_err(|e| e.to_string())?;
     let job = plan.jobs.into_iter().find(|(o, _)| *o == id).map(|(_, j)| j).ok_or_else(|| format!("there is no operation {id}"))??;
-    solidcraft_cam::generate(&job, &plan.clearance).map_err(|e| named(&op.name, &e))
+    super::cam_kit::generate(&job, &plan.clearance).map_err(|e| named(&op.name, &e))
 }
 
 fn summary(op: &CamOperation, path: std::result::Result<&Toolpath, &String>) -> CamOpSummary {
@@ -506,6 +506,10 @@ fn summary(op: &CamOperation, path: std::result::Result<&Toolpath, &String>) -> 
         OpSpec::Drill { offset, peck, .. } => (*offset, None, None, *peck),
     };
     let lowest = path.ok().and_then(Toolpath::lowest_z).map(|z| round(z, 3));
+    let approach = match &op.spec {
+        OpSpec::Pocket { approach, .. } | OpSpec::Contour { approach, .. } => Some(*approach),
+        OpSpec::Face { .. } | OpSpec::Drill { .. } => None,
+    };
     CamOpSummary {
         id: op.id,
         name: op.name.clone(),
@@ -522,6 +526,19 @@ fn summary(op: &CamOperation, path: std::result::Result<&Toolpath, &String>) -> 
         side,
         tabs,
         peck,
+        entry: approach.map(|a| entry_name(a.entry).to_string()),
+        entry_angle: approach.and_then(|a| match a.entry {
+            Some(Entry::Ramp { angle } | Entry::Helix { angle, .. }) => Some(angle),
+            _ => None,
+        }),
+        helix_radius: approach.and_then(|a| match a.entry {
+            Some(Entry::Helix { radius, .. }) => Some(radius),
+            _ => None,
+        }),
+        lead: approach.and_then(|a| a.lead),
+        finish_passes: approach.and_then(|a| a.finish).map(|f| f.passes),
+        finish_stepover: approach.and_then(|a| a.finish).map(|f| f.stepover),
+        spring_pass: approach.and_then(|a| a.finish).is_some_and(|f| f.spring),
     }
 }
 
@@ -643,7 +660,7 @@ fn preview_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|(_, j)| j)
         .ok_or_else(|| format!("there is no operation {}", op.id))
         .and_then(|j| j)
-        .and_then(|j| solidcraft_cam::generate(&j, &plan.clearance).map_err(|e| named(&op.name, &e)))
+        .and_then(|j| super::cam_kit::generate(&j, &plan.clearance).map_err(|e| named(&op.name, &e)))
         .and_then(|t| match gouge_in(&doc, &st, setup, &plan, &op, &t) {
             Some(why) => Err(why),
             None => Ok(t),
@@ -709,7 +726,7 @@ fn build_operation(s: &Session, cmd: &str, q: CamOperationParams) -> Result<(Cam
     let offset = q.offset.or(kept);
     let spec = match kind {
         Some("face") => OpSpec::Face { offset },
-        Some("pocket") => OpSpec::Pocket { face: face()?, offset },
+        Some("pocket") => OpSpec::Pocket { face: face()?, offset, approach: approach(cmd, &q, old, false)? },
         Some("contour") => {
             let side = match q.side.as_deref() {
                 Some("outside") => Side::Outside,
@@ -727,7 +744,7 @@ fn build_operation(s: &Session, cmd: &str, q: CamOperationParams) -> Result<(Cam
                 (None, Some(OpSpec::Contour { tabs, .. })) => *tabs,
                 (None, _) => None,
             };
-            OpSpec::Contour { face: face()?, side, offset, tabs }
+            OpSpec::Contour { face: face()?, side, offset, tabs, approach: approach(cmd, &q, old, true)? }
         }
         Some("drill") => {
             let edges = match (&q.edges, old) {
@@ -816,7 +833,7 @@ fn setup_paths(s: &Session, id: u64) -> std::result::Result<Vec<(CamOperation, s
         .into_iter()
         .filter_map(|(op_id, job)| {
             let op = s.doc.cam.operations.iter().find(|o| o.id == op_id)?.clone();
-            let path = job.and_then(|j| solidcraft_cam::generate(&j, &plan.clearance).map_err(|e| named(&op.name, &e)));
+            let path = job.and_then(|j| super::cam_kit::generate(&j, &plan.clearance).map_err(|e| named(&op.name, &e)));
             Some((op, path))
         })
         .collect())
@@ -1049,6 +1066,80 @@ fn gouge_in(
 }
 
 /// An operation's error, with its name in front unless the toolpath's own message already has it.
+fn entry_name(e: Option<Entry>) -> &'static str {
+    match e {
+        None => "auto",
+        Some(Entry::Plunge) => "plunge",
+        Some(Entry::Ramp { .. }) => "ramp",
+        Some(Entry::Helix { .. }) => "helix",
+    }
+}
+
+/// The entry, leads and finishing passes `q` asks for, on top of the operation's (`old`);
+/// leads and finishing passes only for a contour.
+fn approach(cmd: &str, q: &CamOperationParams, old: Option<&OpSpec>, contour: bool) -> Result<Approach> {
+    let mut a = match old {
+        Some(OpSpec::Pocket { approach, .. } | OpSpec::Contour { approach, .. }) => *approach,
+        _ => Approach::default(),
+    };
+    let angle_was = match a.entry {
+        Some(Entry::Ramp { angle } | Entry::Helix { angle, .. }) => angle,
+        _ => 3.0,
+    };
+    let angle = match q.entry_angle {
+        Some(v) if v.is_finite() && v > 0.0 && v <= 85.0 => v,
+        Some(_) => return Err(bad(cmd, "`entry_angle` must be above 0 and at most 85 degrees")),
+        None => angle_was,
+    };
+    let radius_was = match a.entry {
+        Some(Entry::Helix { radius, .. }) => Some(radius),
+        _ => None,
+    };
+    let radius = match q.helix_radius {
+        Some(v) if v.is_finite() && v > 0.0 && v <= 1000.0 => Some(v),
+        Some(_) => return Err(bad(cmd, "`helix_radius` must be above 0 mm")),
+        None => radius_was,
+    };
+    let kind = match q.entry.as_deref() {
+        Some(k) => Some(k),
+        None if q.entry_angle.is_some() || q.helix_radius.is_some() => Some(entry_name(a.entry)),
+        None => None,
+    };
+    if let Some(kind) = kind {
+        a.entry = match kind {
+            "auto" => None,
+            "plunge" => Some(Entry::Plunge),
+            "ramp" => Some(Entry::Ramp { angle }),
+            // The helix's radius depends on the tool: the planner's default when none is given.
+            "helix" => Some(Entry::Helix { radius: radius.unwrap_or(0.0), angle }),
+            other => return Err(bad(cmd, format!("`entry` must be auto, plunge, ramp or helix, not {other}"))),
+        };
+    }
+    let asks_contour = q.lead.is_some() || q.finish_passes.is_some() || q.finish_stepover.is_some() || q.spring_pass.is_some();
+    if asks_contour && !contour {
+        return Err(bad(cmd, "leads and finishing passes are for a contour"));
+    }
+    if let Some(r) = q.lead {
+        a.lead = match r {
+            r if r == 0.0 => None,
+            r if r.is_finite() && r > 0.0 && r <= 100.0 => Some(r),
+            _ => return Err(bad(cmd, "`lead` must be from 0 to 100 mm")),
+        };
+    }
+    if q.finish_passes.is_some() || q.finish_stepover.is_some() || q.spring_pass.is_some() {
+        let was = a.finish.unwrap_or(Finish { passes: 0, stepover: 0.2, spring: false });
+        let passes = q.finish_passes.unwrap_or(if a.finish.is_none() { 1 } else { was.passes }).min(20);
+        let stepover = match q.finish_stepover {
+            Some(v) if v.is_finite() && v > 0.0 && v <= 10.0 => v,
+            Some(_) => return Err(bad(cmd, "`finish_stepover` must be above 0 and at most 10 mm")),
+            None => was.stepover,
+        };
+        let spring = q.spring_pass.unwrap_or(was.spring);
+        a.finish = (passes > 0).then_some(Finish { passes, stepover, spring });
+    }
+    Ok(a)
+}
+
 fn named(name: &str, e: &dyn std::fmt::Display) -> String {
     let e = e.to_string();
     if e.starts_with(&format!("{name}:")) { e } else { format!("{name}: {e}") }
@@ -1193,6 +1284,48 @@ mod tests {
         assert_eq!(back["stock"], json!([66.0, 16.0, 41.0]));
         // A face that doesn't face along a model axis can't sit on the table; a missing pick neither.
         assert!(s.execute("cam.setup", &json!({"id": id, "table": {"at": [500, 500, 500]}})).is_err());
+    }
+
+    #[test]
+    fn contours_and_pockets_take_entries_leads_and_finishing_passes() {
+        let mut s = block();
+        s.execute("cam.tool", &json!({"number": 1, "diameter": 3.175, "flute_length": 20})).unwrap();
+        s.execute("cam.setup", &json!({})).unwrap();
+        // A contour ramping in at 5°, with leads and a finishing pass gone round twice.
+        let cut = s
+            .execute(
+                "cam.contour",
+                &json!({"tool": 1, "face": {"at": [10, 10, 10]}, "entry": "ramp", "entry_angle": 5, "lead": 2, "finish_passes": 1, "finish_stepover": 0.2, "spring_pass": true}),
+            )
+            .unwrap();
+        let op = &cut["operation"];
+        assert!(op["error"].is_null(), "{cut}");
+        assert_eq!(op["entry"], "ramp");
+        assert_eq!(op["entry_angle"], 5.0);
+        assert_eq!(op["lead"], 2.0);
+        assert_eq!(op["finish_passes"], 1);
+        assert_eq!(op["spring_pass"], true);
+        assert!((op["lowest"].as_f64().unwrap() + 11.5).abs() < 1e-6, "{op}");
+        let id = op["id"].as_u64().unwrap();
+        // Taken off again: no lead, no finishing pass, back to automatic.
+        let plain = s.execute("cam.operation", &json!({"id": id, "lead": 0, "finish_passes": 0, "entry": "auto"})).unwrap();
+        assert!(plain["operation"]["lead"].is_null() && plain["operation"]["finish_passes"].is_null(), "{plain}");
+        assert_eq!(plain["operation"]["entry"], "auto");
+        // A pocket over the top face, round the hole, goes down in a helix by itself.
+        let pocket = s.execute("cam.pocket", &json!({"tool": 1, "face": {"at": [10, 10, 10]}})).unwrap();
+        assert!(pocket["operation"]["error"].is_null(), "{pocket}");
+        assert_eq!(pocket["operation"]["entry"], "auto");
+        let lines = s.execute("cam.toolpaths", &json!({})).unwrap();
+        assert!(lines.to_string().len() > 100);
+        // Leads are for contours; unknown entries and steep angles are refused.
+        assert!(s.execute("cam.pocket", &json!({"tool": 1, "face": {"at": [10, 10, 10]}, "lead": 2})).is_err());
+        assert!(s.execute("cam.contour", &json!({"tool": 1, "face": {"at": [10, 10, 10]}, "entry": "spiral"})).is_err());
+        assert!(s.execute("cam.contour", &json!({"tool": 1, "face": {"at": [10, 10, 10]}, "entry": "ramp", "entry_angle": 90})).is_err());
+        // A helix wider than the tool can't go down: the toolkit says why.
+        let wide = s
+            .execute("cam.preview", &json!({"type": "pocket", "tool": 1, "face": {"at": [10, 10, 10]}, "entry": "helix", "helix_radius": 5}))
+            .unwrap();
+        assert!(wide["operation"]["error"].as_str().is_some_and(|e| e.contains("helix")), "{wide}");
     }
 
     #[test]

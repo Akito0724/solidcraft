@@ -13,8 +13,8 @@
 use serde::{Deserialize, Serialize};
 use solidcore_record::{Plane, Vec3};
 use solidcraft_cam::{
-    Clearance, ContourOp, Cutting, Depths, DrillOp, FaceOp, Frame, Job, Loop, Material, Operation, PocketOp, Region, Side, Tabs, Tool, Toolpath,
-    Vertex,
+    Approach, Clearance, ContourOp, Cutting, Depths, DrillOp, FaceOp, Frame, Job, Loop, Material, Operation, PocketOp, Region, Side, Tabs, Tool,
+    Toolpath, Vertex,
 };
 use solidcraft_geom::prelude::*;
 use solidcraft_sketch::{LinkGeom, LinkKind, LinkSource};
@@ -192,6 +192,9 @@ pub enum OpSpec {
         face: GeoPick,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         offset: Option<f64>,
+        /// How it goes down into the material.
+        #[serde(default, skip_serializing_if = "Approach::is_default")]
+        approach: Approach,
     },
     /// Following the outer boundary of a face, down to where the material beside it begins, or
     /// through the part.
@@ -202,6 +205,10 @@ pub enum OpSpec {
         offset: Option<f64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tabs: Option<Tabs>,
+        /// How it goes down into the material, leads into and out of each pass, and finishing
+        /// passes.
+        #[serde(default, skip_serializing_if = "Approach::is_default")]
+        approach: Approach,
     },
     /// Drilling at the centres of circular edges, down to the holes' bottom, or through the part.
     Drill {
@@ -361,14 +368,14 @@ impl Document {
                     depths: Depths { top, bottom },
                 })
             }
-            OpSpec::Pocket { face, offset } => {
+            OpSpec::Pocket { face, offset, .. } => {
                 let (region, z, up) = self.cam_face(st, frame, face)?;
                 if !up {
                     return Err(DocError::Invalid("pick the pocket's floor, a face that faces up in this setup".into()));
                 }
                 Operation::Pocket(PocketOp { region, depths: Depths { top, bottom: bottom(Some(z), *offset)? } })
             }
-            OpSpec::Contour { face, side, offset, tabs } => {
+            OpSpec::Contour { face, side, offset, tabs, .. } => {
                 let (region, z, _) = self.cam_face(st, frame, face)?;
                 // Where the tool sweeps: beside the outline on its side, two radii wide.
                 let reach = match side {
@@ -412,7 +419,11 @@ impl Document {
                 Operation::Drill(DrillOp { points, depths: Depths { top, bottom: bottom(base, *offset)? }, peck: *peck })
             }
         };
-        Ok(Job { name: op.name.clone(), operation, tool, cutting })
+        let approach = match &op.spec {
+            OpSpec::Pocket { approach, .. } | OpSpec::Contour { approach, .. } => *approach,
+            OpSpec::Face { .. } | OpSpec::Drill { .. } => Approach::default(),
+        };
+        Ok(Job { name: op.name.clone(), operation, tool, cutting, approach })
     }
 
     /// The face at `pick` seen down the machine's Z (`frame`): its boundary in machine XY (outer

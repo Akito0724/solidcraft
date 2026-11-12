@@ -8,7 +8,7 @@ fn wood(tool: &Tool) -> Cutting {
 
 fn job(name: &str, operation: Operation, tool: Tool) -> Job {
     let cutting = wood(&tool);
-    Job { name: name.into(), operation, tool, cutting }
+    Job { name: name.into(), operation, tool, cutting, approach: Default::default() }
 }
 
 /// Every XY position the toolpath cuts at (its feed and arc end points).

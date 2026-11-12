@@ -204,6 +204,28 @@ pub struct CamOperationParams {
     /// Drill: depth per peck (mm); 0 drills in one go.
     #[serde(default)]
     pub peck: Option<f64>,
+    /// Contour and pocket: how the tool goes down into each pass: `auto` (default: a helix in a
+    /// pocket, else a ramp, else a plunge, whichever fits), `plunge`, `ramp` or `helix`.
+    #[serde(default)]
+    pub entry: Option<String>,
+    /// The steepest a ramp or helix goes down (degrees, default 3).
+    #[serde(default)]
+    pub entry_angle: Option<f64>,
+    /// A helix's radius (mm, at most the tool's radius; default three quarters of it).
+    #[serde(default)]
+    pub helix_radius: Option<f64>,
+    /// Contour: a quarter arc of this radius into and out of each pass (mm); 0 removes it.
+    #[serde(default)]
+    pub lead: Option<f64>,
+    /// Contour: finishing passes at full depth; 0 removes them.
+    #[serde(default)]
+    pub finish_passes: Option<u32>,
+    /// Contour: how far apart the finishing passes are (mm, default 0.2).
+    #[serde(default)]
+    pub finish_stepover: Option<f64>,
+    /// Contour: go round the last finishing pass once more.
+    #[serde(default)]
+    pub spring_pass: Option<bool>,
     /// Cutting data other than the material's starting values.
     #[serde(default)]
     pub spindle_rpm: Option<f64>,
@@ -281,6 +303,24 @@ pub struct CamOpSummary {
     /// Drill: depth per peck (mm).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peck: Option<f64>,
+    /// Contour and pocket: `auto`, `plunge`, `ramp` or `helix`, and the ramp or helix's angle
+    /// (degrees) and the helix's radius (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_angle: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helix_radius: Option<f64>,
+    /// Contour: the lead arcs' radius (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead: Option<f64>,
+    /// Contour: finishing passes, how far apart (mm), and whether the last is gone round twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish_passes: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish_stepover: Option<f64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub spring_pass: bool,
 }
 
 /// Move an operation earlier (`by` < 0) or later among its setup's operations: the order they

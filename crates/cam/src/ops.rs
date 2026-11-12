@@ -117,6 +117,56 @@ pub enum Operation {
     Drill(DrillOp),
 }
 
+/// How the tool goes down into a contour's or a pocket's passes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
+pub enum Entry {
+    /// Straight down at the plunge feed.
+    Plunge,
+    /// Down along the pass, no steeper than `angle` (degrees).
+    Ramp { angle: f64 },
+    /// Down round a circle of `radius` (mm, at most the tool's radius), no steeper than `angle`
+    /// (degrees).
+    Helix { radius: f64, angle: f64 },
+}
+
+/// Finishing passes round a contour at its full depth.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Finish {
+    /// How many; the depth passes stay `passes × stepover` off the wall for them.
+    pub passes: u32,
+    /// How far apart (mm), at most half the tool's radius.
+    pub stepover: f64,
+    /// Go round the last one once more.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub spring: bool,
+}
+
+/// How a contour or a pocket goes into the material and along its wall. The default leaves the
+/// choice to the planner.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Approach {
+    /// `None`: the gentlest that fits (a helix, a ramp, else a plunge).
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub entry: Option<Entry>,
+    /// A contour: a quarter arc of this radius (mm) into and out of each pass, on the side away
+    /// from the part.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub lead: Option<f64>,
+    /// A contour: finishing passes at full depth.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub finish: Option<Finish>,
+}
+
+impl Approach {
+    pub fn is_default(&self) -> bool {
+        *self == Approach::default()
+    }
+}
+
 /// An operation with the tool that cuts it and how.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Job {
@@ -124,10 +174,27 @@ pub struct Job {
     pub operation: Operation,
     pub tool: Tool,
     pub cutting: Cutting,
+    /// How a contour or a pocket enters (a planner that knows how: see the engine).
+    pub approach: Approach,
 }
 
 /// The toolpath for `job`.
 pub fn generate(job: &Job, clearance: &Clearance) -> Result<Toolpath> {
+    check(job, clearance)?;
+    let mut b = Builder::new();
+    match &job.operation {
+        Operation::Face(o) => face(&mut b, o, job, clearance)?,
+        Operation::Pocket(o) => pocket(&mut b, o, job, clearance)?,
+        Operation::Contour(o) => contour(&mut b, o, job, clearance)?,
+        Operation::Drill(o) => drill(&mut b, o, job, clearance)?,
+    }
+    b.retract(clearance.safe_z);
+    Ok(Toolpath { name: job.name.clone(), tool: job.tool.clone(), cutting: job.cutting, safe_z: clearance.safe_z, moves: b.moves })
+}
+
+/// Whether `job` can be cut at all: its tool, its cutting data, its depths against the tool and
+/// the heights, and the tool for the operation.
+pub fn check(job: &Job, clearance: &Clearance) -> Result<()> {
     if let Some(p) = job.tool.problem() {
         return Err(invalid(p));
     }
@@ -147,15 +214,7 @@ pub fn generate(job: &Job, clearance: &Clearance) -> Result<Toolpath> {
     if job.tool.kind == ToolKind::Drill && !matches!(job.operation, Operation::Drill(_)) {
         return Err(invalid(format!("{}: a drill can only drill", job.name)));
     }
-    let mut b = Builder::new();
-    match &job.operation {
-        Operation::Face(o) => face(&mut b, o, job, clearance)?,
-        Operation::Pocket(o) => pocket(&mut b, o, job, clearance)?,
-        Operation::Contour(o) => contour(&mut b, o, job, clearance)?,
-        Operation::Drill(o) => drill(&mut b, o, job, clearance)?,
-    }
-    b.retract(clearance.safe_z);
-    Ok(Toolpath { name: job.name.clone(), tool: job.tool.clone(), cutting: job.cutting, safe_z: clearance.safe_z, moves: b.moves })
+    Ok(())
 }
 
 fn check_depths(name: &str, d: &Depths, tool: &Tool, c: &Clearance) -> Result<()> {

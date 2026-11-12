@@ -109,6 +109,17 @@ pub struct CamPanel {
     pub tab_width: String,
     pub tab_height: String,
     pub peck: String,
+    /// Contour and pocket: how the tool goes down (an index into [`ENTRIES`]), how steeply
+    /// (degrees) and a helix's radius (mm); empty: the planner's choice.
+    pub entry: usize,
+    pub entry_angle: String,
+    pub helix_radius: String,
+    /// Contour: the lead arcs' radius (mm; empty or 0: none), finishing passes, how far apart,
+    /// and the spring pass.
+    pub lead: String,
+    pub finish_passes: String,
+    pub finish_stepover: String,
+    pub spring_pass: bool,
     /// The last refusal.
     pub error: Option<String>,
     /// What the last export wrote.
@@ -217,6 +228,13 @@ impl Default for CamPanel {
             tabs: "4".into(),
             tab_width: "6".into(),
             tab_height: "2".into(),
+            entry: 0,
+            entry_angle: String::new(),
+            helix_radius: String::new(),
+            lead: String::new(),
+            finish_passes: String::new(),
+            finish_stepover: String::new(),
+            spring_pass: false,
             peck: "0".into(),
             error: None,
             notice: None,
@@ -323,6 +341,13 @@ impl CamPanel {
             self.tabs = "0".into();
         }
         self.peck = num(&op["peck"]);
+        self.entry = ENTRIES.iter().position(|e| Some(*e) == op["entry"].as_str()).unwrap_or(0);
+        self.entry_angle = num(&op["entry_angle"]);
+        self.helix_radius = num(&op["helix_radius"]);
+        self.lead = num(&op["lead"]);
+        self.finish_passes = op["finish_passes"].as_u64().map(|n| n.to_string()).unwrap_or_default();
+        self.finish_stepover = num(&op["finish_stepover"]);
+        self.spring_pass = op["spring_pass"].as_bool().unwrap_or(false);
         let c = &op["cutting"];
         self.rpm = num(&c["spindle_rpm"]);
         self.feed = num(&c["feed"]);
@@ -550,7 +575,28 @@ impl CamPanel {
             }
             _ => {}
         }
+        if kind == "pocket" || kind == "contour" {
+            let entry = ENTRIES.get(self.entry).copied().unwrap_or("auto");
+            p["entry"] = json!(entry);
+            if entry == "ramp" || entry == "helix" {
+                if let Some(v) = number(&self.entry_angle) {
+                    p["entry_angle"] = json!(v);
+                }
+                if let Some(v) = number(&self.helix_radius).filter(|_| entry == "helix") {
+                    p["helix_radius"] = json!(v);
+                }
+            }
+        }
         if kind == "contour" {
+            p["lead"] = json!(number(&self.lead).unwrap_or(0.0));
+            let passes = self.finish_passes.trim().parse::<u32>().unwrap_or(0);
+            p["finish_passes"] = json!(passes);
+            if passes > 0 {
+                if let Some(v) = number(&self.finish_stepover) {
+                    p["finish_stepover"] = json!(v);
+                }
+                p["spring_pass"] = json!(self.spring_pass);
+            }
             p["side"] = json!(SIDES.get(self.side).copied().unwrap_or("outside"));
             let count = self.tabs.trim().parse::<u32>().unwrap_or(0);
             p["tabs"] = json!({"count": count, "width": number(&self.tab_width).unwrap_or(6.0), "height": number(&self.tab_height).unwrap_or(2.0)});
@@ -1072,6 +1118,9 @@ pub enum CamDialog {
 
 /// The operation dialog's tabs.
 const TABS: [&str; 4] = ["Tool", "Geometry", "Heights", "Passes"];
+/// How a contour or pocket goes down into the material.
+const ENTRIES: [&str; 4] = ["auto", "plunge", "ramp", "helix"];
+const ENTRY_LABELS: [&str; 4] = ["Automatic", "Plunge", "Ramp", "Helix"];
 
 /// The icon of an operation's row and dialog.
 fn kind_icon(kind: &str) -> &'static str {
@@ -1419,6 +1468,27 @@ fn operation_body(ui: &mut egui::Ui, d: &mut CamPanel, kind: &str, tools: &[Valu
                 field(ui, "Stepover (%)", &mut d.stepover, &hint(&used["stepover"], 100.0));
             }
             crate::ui_kit::text(ui, tr("cam.panel.cutting_hint"), crate::ui_kit::Text::Hint("tool"));
+            if kind == "pocket" || kind == "contour" {
+                ui.add_space(t.space_4);
+                crate::ui_kit::row(ui, "Entry", |ui| crate::ui_kit::dropdown(ui, "cam_op_entry", &mut d.entry, &ENTRY_LABELS));
+                let entry = ENTRIES.get(d.entry).copied().unwrap_or("auto");
+                if entry == "ramp" || entry == "helix" {
+                    field(ui, "Entry angle (°)", &mut d.entry_angle, "3");
+                }
+                if entry == "helix" {
+                    field(ui, "Helix radius", &mut d.helix_radius, tr_label("auto"));
+                }
+                crate::ui_kit::text(ui, tr("cam.panel.entry_hint"), crate::ui_kit::Text::Hint("tool"));
+            }
+            if kind == "contour" {
+                ui.add_space(t.space_4);
+                field(ui, "Lead radius", &mut d.lead, "0");
+                field(ui, "Finishing passes", &mut d.finish_passes, "0");
+                if d.finish_passes.trim().parse::<u32>().unwrap_or(0) > 0 {
+                    field(ui, "Finish stepover", &mut d.finish_stepover, "0.2");
+                    crate::ui_kit::checkbox(ui, tr_label("Spring pass"), &mut d.spring_pass);
+                }
+            }
             if crate::ui_kit::button(ui, tr_label("Starting values"), crate::ui_kit::Button::Normal).clicked() {
                 for f in [&mut d.rpm, &mut d.feed, &mut d.plunge, &mut d.stepdown, &mut d.stepover] {
                     f.clear();
