@@ -29,7 +29,7 @@ pub use geom2::{Loop, Region, Vertex};
 pub use ops::{Clearance, ContourOp, Depths, DrillOp, FaceOp, Job, Operation, PocketOp, Side, Tabs, generate};
 pub use post::{PostOptions, by_tool, grbl};
 pub use setup::{Frame, cross};
-pub use sim::{Playback, Stock};
+pub use sim::{Crash, Cutter, Event, Quad, Run, RunOp, Shade, Stock, surface};
 pub use tool::{Cutting, Material, Tool, ToolKind};
 pub use toolpath::{Move, P3, Toolpath};
 

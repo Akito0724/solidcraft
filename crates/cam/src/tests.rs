@@ -254,44 +254,220 @@ fn a_toolpath_draws_as_points_with_its_arcs_in_short_pieces() {
 
 #[test]
 fn the_stock_is_cut_where_the_cutter_passes_and_nowhere_else() {
-    use crate::sim::{Playback, Stock, cut};
+    use crate::sim::{Cutter, Run, RunOp, Stock};
     let mut stock = Stock::new([-10.0, -10.0, -5.0], [10.0, 10.0, 0.0], 0.25).unwrap();
     assert!(stock.nx >= 80 && stock.ny >= 80);
     // A 3 mm cutter along X at Z -2.
-    stock.sweep(P3::new(-5.0, 0.0, -2.0), P3::new(5.0, 0.0, -2.0), 1.5);
-    let at = |s: &Stock, x: f64, y: f64| {
-        let i = ((x - s.x0) / s.dx).round() as usize;
-        let j = ((y - s.y0) / s.dy).round() as usize;
-        s.column(i, j).unwrap().z
-    };
+    let flat = Cutter::flat(1.5, 12.0);
+    stock.sweep(P3::new(-5.0, 0.0, -2.0), P3::new(5.0, 0.0, -2.0), &flat);
     assert!((at(&stock, 0.0, 0.0) + 2.0).abs() < 1e-9);
     assert!((at(&stock, 0.0, 1.2) + 2.0).abs() < 1e-9, "inside the cutter's width");
     assert_eq!(at(&stock, 0.0, 3.0), 0.0, "outside it");
     assert_eq!(at(&stock, 8.0, 0.0), 0.0, "past the end of the move");
     // Never below the stock's bottom; nothing above its top.
-    stock.plunge(P3::new(0.0, 5.0, -50.0), 1.0);
+    let small = Cutter::flat(1.0, 60.0);
+    stock.sweep(P3::new(0.0, 5.0, -50.0), P3::new(0.0, 5.0, -50.0), &small);
     assert_eq!(at(&stock, 0.0, 5.0), -5.0);
-    stock.plunge(P3::new(0.0, -5.0, 3.0), 1.0);
+    stock.sweep(P3::new(0.0, -5.0, 3.0), P3::new(0.0, -5.0, 3.0), &small);
     assert_eq!(at(&stock, 0.0, -5.0), 0.0);
     // Removed volume ≈ a 10 × 3 mm slot (plus round ends) 2 mm deep, and the plunge.
     let slot = 10.0 * 3.0 * 2.0 + std::f64::consts::PI * 1.5 * 1.5 * 2.0;
     let hole = std::f64::consts::PI * 1.0 * 5.0;
     assert!((stock.removed() - slot - hole).abs() < 0.15 * (slot + hole), "{}", stock.removed());
+    // A sloped move cuts a ramp.
+    let mut ramp = Stock::new([-10.0, -10.0, -5.0], [10.0, 10.0, 0.0], 0.25).unwrap();
+    ramp.sweep(P3::new(-8.0, 0.0, 0.0), P3::new(8.0, 0.0, -4.0), &flat);
+    // At X 0 the lowest of the cutter is its edge 1.5 mm on, where the tip is 0.375 mm lower.
+    assert!((at(&ramp, 0.0, 0.0) + 2.375).abs() < 0.05, "{}", at(&ramp, 0.0, 0.0));
     // A whole contour played back: the ring around the part goes to the bottom, the part stays.
     let tool = Tool::endmill(1, 3.0, 2, 12.0);
     let op =
         ContourOp { profile: Loop::rectangle((-5.0, -5.0), (5.0, 5.0)), side: Side::Outside, depths: Depths { top: 0.0, bottom: -5.5 }, tabs: None };
     let path = generate(&job("ring", Operation::Contour(op), tool), &Clearance::default()).unwrap();
-    let play = Playback::new(&path, 0.5);
-    let mut stock = Stock::new([-10.0, -10.0, -5.0], [10.0, 10.0, 0.0], 0.25).unwrap();
-    cut(&mut stock, play.radius, &play.points, 0, play.points.len());
-    assert_eq!(at(&stock, 0.0, 0.0), 0.0, "the part is untouched");
-    assert_eq!(at(&stock, 6.5, 0.0), -5.0, "the slot around it is through");
-    assert_eq!(at(&stock, 9.5, 9.5), 0.0, "the corner of the stock beyond the cutter stays");
+    let stock = Stock::new([-10.0, -10.0, -5.0], [10.0, 10.0, 0.0], 0.25).unwrap();
+    let mut run = Run::new(stock, vec![RunOp::new("ring".into(), &path, 0.5)]);
+    assert!(!run.advance(f64::INFINITY, true), "a contour's own moves don't crash: {:?}", run.events);
+    assert!(run.done() && run.events.is_empty());
+    assert_eq!(at(&run.stock, 0.0, 0.0), 0.0, "the part is untouched");
+    assert_eq!(at(&run.stock, 6.5, 0.0), -5.0, "the slot around it is through");
+    assert_eq!(at(&run.stock, 9.5, 9.5), 0.0, "the corner of the stock beyond the cutter stays");
     // Bad blocks make no stock.
     assert!(Stock::new([0.0; 3], [0.0; 3], 1.0).is_none());
     assert!(Stock::new([0.0; 3], [f64::NAN, 1.0, 1.0], 1.0).is_none());
     // A huge block is split into at most MAX_CELLS columns.
     let big = Stock::new([0.0; 3], [5000.0, 5000.0, 10.0], 0.1).unwrap();
     assert!(big.nx * big.ny <= crate::sim::MAX_CELLS);
+}
+
+/// The height of the column nearest `(x, y)`.
+fn at(s: &crate::sim::Stock, x: f64, y: f64) -> f64 {
+    let i = ((x - s.x0) / s.dx).round() as usize;
+    let j = ((y - s.y0) / s.dy).round() as usize;
+    s.column(i, j).unwrap().z
+}
+
+#[test]
+fn a_cutter_cuts_its_own_shape() {
+    use crate::sim::{Cutter, Stock};
+    let fresh = || Stock::new([-10.0, -10.0, -10.0], [10.0, 10.0, 0.0], 0.1).unwrap();
+    // A ball end leaves a round groove: as deep as its tip in the middle, 1 mm higher 2.65 mm
+    // out on a 4 mm ball (r − √(r² − d²) with r = 4, d = √7).
+    let mut s = fresh();
+    s.sweep(P3::new(-8.0, 0.0, -3.0), P3::new(8.0, 0.0, -3.0), &Cutter::ball(4.0, 20.0));
+    assert!((at(&s, 0.0, 0.0) + 3.0).abs() < 1e-3);
+    assert!((at(&s, 0.0, 7f64.sqrt()) + 2.0).abs() < 0.05, "{}", at(&s, 0.0, 7f64.sqrt()));
+    assert_eq!(at(&s, 0.0, 4.5), 0.0);
+    // A drill's 118° point: the hole's wall is 0.6 r above its tip.
+    let drill = Cutter::drill(3.0, 30.0);
+    assert!((drill.point_length() - 3.0 / 59f64.to_radians().tan()).abs() < 1e-9);
+    let mut s = fresh();
+    s.sweep(P3::new(0.0, 0.0, -6.0), P3::new(0.0, 0.0, -6.0), &drill);
+    assert!((at(&s, 0.0, 0.0) + 6.0).abs() < 0.05);
+    assert!((at(&s, 2.9, 0.0) + 6.0 - 2.9 / 59f64.to_radians().tan()).abs() < 0.1);
+    // Cutters that aren't one cut nothing.
+    let mut s = fresh();
+    s.sweep(P3::new(0.0, 0.0, -6.0), P3::new(1.0, 0.0, -6.0), &Cutter::flat(f64::NAN, 10.0));
+    s.sweep(P3::new(f64::INFINITY, 0.0, -6.0), P3::new(1.0, 0.0, -6.0), &Cutter::flat(1.0, 10.0));
+    assert_eq!(s.removed(), 0.0);
+}
+
+#[test]
+fn a_playback_finds_rapids_into_material_and_shanks_that_rub() {
+    use crate::sim::{Crash, Cutter, Run, RunOp, Stock};
+    let fresh = || Stock::new([-10.0, -10.0, -10.0], [10.0, 10.0, 0.0], 0.25).unwrap();
+    let p = |x: f64, y: f64, z: f64| P3::new(x, y, z);
+    // Down at a feed, then a rapid sideways through the stock, then up.
+    let op = RunOp {
+        name: "bad".into(),
+        cutter: Cutter::flat(1.5, 20.0),
+        points: vec![(p(-5.0, 0.0, 5.0), true), (p(-5.0, 0.0, -2.0), false), (p(5.0, 0.0, -2.0), true), (p(5.0, 0.0, 5.0), true)],
+    };
+    let mut run = Run::new(fresh(), vec![op]);
+    assert!(run.advance(f64::INFINITY, true), "the rapid sideways crashes");
+    assert!(!run.done(), "and the playback halts there");
+    let e = run.events[0];
+    assert_eq!(e.crash, Crash::Rapid);
+    assert!(e.at.x > -5.0 && e.at.x < 5.0 && (e.at.z + 2.0).abs() < 1e-9, "{e:?}");
+    // Played on, the same crash isn't found again; the rapid cut its way through.
+    assert!(!run.advance(f64::INFINITY, true));
+    assert!(run.done() && run.events.len() == 1);
+    assert!((at(&run.stock, 0.0, 0.0) + 2.0).abs() < 1e-9);
+    // Going back and playing again finds nothing new.
+    run.seek(0.0);
+    assert_eq!(run.stock.removed(), 0.0);
+    run.seek(run.total());
+    assert_eq!(run.events.len(), 1);
+    // A cut 8 mm deep with 5 mm flutes: the shank rubs on the material above them.
+    let deep = RunOp {
+        name: "deep".into(),
+        cutter: Cutter::flat(1.5, 5.0),
+        points: vec![(p(-5.0, 0.0, 5.0), true), (p(-5.0, 0.0, -8.0), false), (p(5.0, 0.0, -8.0), false)],
+    };
+    let mut run = Run::new(fresh(), vec![deep]);
+    run.advance(f64::INFINITY, false);
+    assert_eq!(run.events.len(), 1, "one crash over the moves it lasts: {:?}", run.events);
+    assert_eq!(run.events[0].crash, Crash::Shank);
+    assert_eq!((run.events[0].first, run.events[0].last), (1, 2));
+    // With long enough flutes it's fine.
+    let fine = RunOp {
+        name: "fine".into(),
+        cutter: Cutter::flat(1.5, 12.0),
+        points: vec![(p(-5.0, 0.0, 5.0), true), (p(-5.0, 0.0, -8.0), false), (p(5.0, 0.0, -8.0), false), (p(5.0, 0.0, 5.0), true)],
+    };
+    let mut run = Run::new(fresh(), vec![fine]);
+    assert!(!run.advance(f64::INFINITY, true) && run.events.is_empty());
+}
+
+#[test]
+fn a_playback_seeks_steps_and_knows_where_each_operation_starts() {
+    use crate::sim::{Cutter, Run, RunOp, Stock};
+    let p = |x: f64, y: f64, z: f64| P3::new(x, y, z);
+    let line = |name: &str, y: f64| RunOp {
+        name: name.into(),
+        cutter: Cutter::flat(1.0, 20.0),
+        points: vec![(p(-5.0, y, 5.0), true), (p(-5.0, y, -1.0), false), (p(5.0, y, -1.0), false), (p(5.0, y, 5.0), true)],
+    };
+    let stock = Stock::new([-10.0, -10.0, -10.0], [10.0, 10.0, 0.0], 0.25).unwrap();
+    let mut run = Run::new(stock, vec![line("a", -3.0), line("b", 3.0)]);
+    // Each: 6 down, 10 across, 0.6 up (a 6 mm rapid counts a tenth).
+    assert!((run.total() - 2.0 * 16.6).abs() < 1e-9, "{}", run.total());
+    assert!((run.start_of(1) - 16.6).abs() < 1e-9);
+    run.step();
+    assert!((run.tip().z + 1.0).abs() < 1e-9 && (run.tip().x + 5.0).abs() < 1e-9, "a move: down");
+    run.step();
+    assert!((run.tip().x - 5.0).abs() < 1e-9, "the next: across");
+    run.seek(run.start_of(1) + 1.0);
+    assert_eq!(run.op_index(), 1);
+    assert!((at(&run.stock, 0.0, -3.0) + 1.0).abs() < 1e-9, "the first is cut");
+    assert_eq!(at(&run.stock, 0.0, 3.0), 0.0, "the second not yet");
+    let version = run.version;
+    run.seek(5.0);
+    assert!(run.version > version);
+    assert_eq!(at(&run.stock, 0.0, -3.0), 0.0, "back before the first's cut");
+    run.seek(f64::NAN);
+    assert!(run.done());
+}
+
+#[test]
+fn the_stock_is_compared_with_the_part_and_drawn_as_merged_quads() {
+    use crate::sim::{Shade, Stock, surface};
+    // A 10 × 10 stock 0 … 2 high; the part a 4 × 4 block 1 high in its middle.
+    let mut s = Stock::new([0.0, 0.0, 0.0], [10.0, 10.0, 2.0], 0.5).unwrap();
+    let (a, b) = ((3.0, 3.0), (7.0, 7.0));
+    let tris = [[[a.0, a.1, 1.0], [b.0, a.1, 1.0], [b.0, b.1, 1.0]], [[a.0, a.1, 1.0], [b.0, b.1, 1.0], [a.0, b.1, 1.0]]];
+    let target = s.target(tris);
+    let k = |x: f64, y: f64, s: &Stock| (((y - s.y0) / s.dy).round() as usize, ((x - s.x0) / s.dx).round() as usize);
+    let (j, i) = k(5.0, 5.0, &s);
+    assert_eq!(target[j * s.nx + i], 1.0);
+    let (j0, i0) = k(1.0, 1.0, &s);
+    assert_eq!(target[j0 * s.nx + i0], f64::NEG_INFINITY);
+    // Uncut: 1 mm left over the part, plain stock beyond it.
+    assert_eq!(s.shade(Some(&target), i, j, 0.05), Shade::Left(2));
+    assert_eq!(s.shade(Some(&target), i0, j0, 0.05), Shade::Uncut);
+    assert_eq!(s.shade(None, i, j, 0.05), Shade::Uncut);
+    // Cut to 1.3: a little left; to the part; below it; and beyond the part.
+    let set = |s: &mut Stock, i: usize, j: usize, h: f64| {
+        let n = s.nx;
+        s.heights[j * n + i] = h;
+    };
+    set(&mut s, i, j, 1.3);
+    assert_eq!(s.shade(Some(&target), i, j, 0.05), Shade::Left(1));
+    set(&mut s, i, j, 1.03);
+    assert_eq!(s.shade(Some(&target), i, j, 0.05), Shade::OnPart);
+    set(&mut s, i, j, 0.5);
+    assert_eq!(s.shade(Some(&target), i, j, 0.05), Shade::Gouge);
+    set(&mut s, i0, j0, 0.0);
+    assert_eq!(s.shade(Some(&target), i0, j0, 0.05), Shade::Cut);
+    // Beside the part's edge a column cut to the floor isn't a gouge.
+    let (je, ie) = k(2.75, 5.0, &s);
+    set(&mut s, ie, je, 0.0);
+    assert_ne!(s.shade(Some(&target), ie, je, 0.05), Shade::Gouge);
+    // An uncut block is six quads; each faces the way its corners turn.
+    let block = Stock::new([0.0, 0.0, 0.0], [10.0, 10.0, 2.0], 0.5).unwrap();
+    let quads = surface(&block, |_, _| Shade::Uncut);
+    assert_eq!(quads.len(), 6, "{quads:?}");
+    let faces_out = |q: &crate::sim::Quad| {
+        let [p0, p1, p2, _] = q.corners;
+        let (u, v) = ([p1.x - p0.x, p1.y - p0.y, p1.z - p0.z], [p2.x - p0.x, p2.y - p0.y, p2.z - p0.z]);
+        let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        n[0] * q.normal[0] + n[1] * q.normal[1] + n[2] * q.normal[2] > 0.0
+    };
+    assert!(quads.iter().all(faces_out));
+    // A pocket adds its floor and four walls and splits the top around it; still all outward.
+    let mut pocket = block.clone();
+    for j in 8..12 {
+        for i in 8..12 {
+            set(&mut pocket, i, j, 1.0);
+        }
+    }
+    let quads = surface(&pocket, |_, _| Shade::Cut);
+    assert!(quads.iter().all(faces_out));
+    let walls = quads.iter().filter(|q| q.normal[2] == 0.0 && q.corners.iter().all(|c| c.z >= 1.0)).count();
+    assert_eq!(walls, 4, "{quads:?}");
+    let area: f64 = quads
+        .iter()
+        .filter(|q| q.normal == [0.0, 0.0, 1.0])
+        .map(|q| (q.corners[2].x - q.corners[0].x).abs() * (q.corners[2].y - q.corners[0].y).abs())
+        .sum();
+    assert!((area - 100.0).abs() < 1e-9, "the tops cover the block once: {area}");
 }

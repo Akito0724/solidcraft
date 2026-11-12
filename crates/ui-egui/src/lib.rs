@@ -2680,6 +2680,10 @@ impl SolveApp {
     /// Visibility in the editor's scene: hidden face-profile sources are temporarily shown
     /// without changing the session's visibility or either history stack.
     pub(crate) fn body_visible(&self, name: &str) -> bool {
+        // The body a machining simulation plays the stock of stands hidden behind that stock.
+        if cam_panel::hidden_body(self) == Some(name) {
+            return false;
+        }
         self.session.body_visible(name) || self.dialog.as_ref().is_some_and(|d| d.edit_source_bodies.iter().any(|source| source == name))
     }
 

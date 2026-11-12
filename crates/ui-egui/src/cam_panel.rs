@@ -256,6 +256,13 @@ enum Action {
     Simulate,
     PlayPause,
     ToEnd,
+    ToStart,
+    /// Play the move under way to its end.
+    Step,
+    /// Go to this far into the playback.
+    Seek(f64),
+    /// To the start of the operation before or after the one playing.
+    Chapter(i32),
     StopSimulation,
 }
 
@@ -597,6 +604,10 @@ fn box_edges(a: Vec3, b: Vec3) -> Vec<[Vec3; 2]> {
 /// edges), while the window shows toolpaths. [`paint_toolpaths`] draws them all faintly on top,
 /// so what the model hides still shows through, dimmed.
 pub(crate) fn scene_lines(sc: &mut crate::gpu::GpuScene, app: &SolveApp) {
+    if let Some(sim) = app.machining.as_ref().and_then(|d| d.sim.as_ref()) {
+        crate::cam_sim::scene(sc, sim);
+        return;
+    }
     let Some((_, _, lines)) = app.machining.as_ref().filter(|d| d.show_paths && d.sim.is_none()).and_then(|d| d.paths.as_ref()) else {
         return;
     };
@@ -705,9 +716,19 @@ fn axis_toward(f: &solidcraft_engine::machining::Frame, proj: &crate::viewport::
     Some(pick.map(f64::round))
 }
 
-/// What the model scene's lines depend on: `None` while no toolpaths are shown.
-pub(crate) fn scene_key(app: &SolveApp) -> Option<(u64, u64)> {
-    app.machining.as_ref().filter(|d| d.show_paths && d.paths.is_some() && d.sim.is_none()).map(|d| (d.generation, d.setup.unwrap_or(0)))
+/// What the model scene's machining depends on: the simulated stock as last drawn, or the
+/// toolpaths shown; `None` for neither.
+pub(crate) fn scene_key(app: &SolveApp) -> Option<(u64, u64, u64)> {
+    let d = app.machining.as_ref()?;
+    if let Some(sim) = &d.sim {
+        return Some((sim.shown, sim.setup, 1 + u64::from(sim.compare)));
+    }
+    (d.show_paths && d.paths.is_some()).then(|| (d.generation, d.setup.unwrap_or(0), 0))
+}
+
+/// The body hidden while its setup's stock plays (the stock stands in its place).
+pub(crate) fn hidden_body(app: &SolveApp) -> Option<&str> {
+    app.machining.as_ref().and_then(|d| d.sim.as_ref()).map(|s| s.body.as_str())
 }
 
 /// Draw the open window's toolpaths over the model: faintly, so the parts the model hides show
@@ -763,7 +784,7 @@ pub fn paint_toolpaths(app: &mut SolveApp, painter: &egui::Painter, proj: &crate
 }
 
 /// An operation's generated name (`contour 2`) in the interface language; others as they are.
-fn op_name(name: &str) -> String {
+pub(crate) fn op_name(name: &str) -> String {
     if let Some((kind, n)) = name.split_once(' ')
         && !n.is_empty()
         && n.chars().all(|c| c.is_ascii_digit())
@@ -1488,17 +1509,69 @@ fn player(ctx: &egui::Context, d: &mut CamPanel, action: &mut Option<Action>) {
     let t = Tokens::get();
     let closed = crate::ui_kit::Window::new(egui::Id::unique("sc_cam_player"), "play", tr_label("Simulate")).show_body(ctx, |ui| {
         ui.horizontal(|ui| {
+            if crate::ui_kit::button(ui, tr_label("To Start"), crate::ui_kit::Button::Small).clicked() {
+                *action = Some(Action::ToStart);
+            }
             let label = if sim.playing && !sim.done() { tr_label("Pause") } else { tr_label("Play") };
             if crate::ui_kit::button(ui, label, crate::ui_kit::Button::Small).clicked() {
                 *action = Some(Action::PlayPause);
+            }
+            if crate::ui_kit::button(ui, tr_label("Step"), crate::ui_kit::Button::Small).clicked() {
+                *action = Some(Action::Step);
             }
             if crate::ui_kit::button(ui, tr_label("To End"), crate::ui_kit::Button::Small).clicked() {
                 *action = Some(Action::ToEnd);
             }
             crate::ui_kit::dropdown(ui, "cam_sim_speed", &mut sim.speed, &crate::cam_sim::SPEED_LABELS);
         });
+        // Where it is: drag to go anywhere.
+        let total = sim.run.total();
+        let mut at = sim.run.travelled();
+        if total > 0.0 && crate::ui_kit::slider(ui, &mut at, 0.0..=total, crate::ui_kit::Slider { show_value: false, ..Default::default() }).changed()
+        {
+            *action = Some(Action::Seek(at));
+        }
+        ui.horizontal(|ui| {
+            if crate::ui_kit::button(ui, tr_label("Previous Operation"), crate::ui_kit::Button::Small).clicked() {
+                *action = Some(Action::Chapter(-1));
+            }
+            if crate::ui_kit::button(ui, tr_label("Next Operation"), crate::ui_kit::Button::Small).clicked() {
+                *action = Some(Action::Chapter(1));
+            }
+        });
         let (name, done) = sim.progress();
         ui.label(RichText::new(format!("{} · {:.0}%", op_name(&name), done * 100.0)).small().color(t.text_dim));
+        crate::ui_kit::checkbox(ui, tr_label("Compare with the part"), &mut sim.compare);
+        if sim.compare {
+            ui.horizontal_wrapped(|ui| {
+                for (shade, label) in [
+                    (solidcraft_engine::machining::Shade::OnPart, "On the part"),
+                    (solidcraft_engine::machining::Shade::Left(1), "Material left"),
+                    (solidcraft_engine::machining::Shade::Gouge, "Cut too deep"),
+                ] {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 2.0, crate::cam_sim::shade_color(shade));
+                    ui.label(RichText::new(tr_label(label)).small().color(t.text_dim));
+                }
+            });
+        }
+        // The crashes found so far: the one that stopped it first; a click goes there.
+        if let Some(k) = sim.halted
+            && let Some(text) = crate::cam_sim::crash_text(sim, k)
+        {
+            ui.label(RichText::new(solidcraft_ui_text::format("cam.sim.halted", &[("crash", &text)])).small().color(t.error));
+        }
+        let count = sim.run.events.len();
+        if count > 0 {
+            ui.label(RichText::new(solidcraft_ui_text::format("cam.sim.crashes", &[("n", &count.to_string())])).small().strong().color(t.error));
+            for k in 0..count.min(8) {
+                let Some(text) = crate::cam_sim::crash_text(sim, k) else { continue };
+                let travel = sim.run.events.get(k).map_or(0.0, |e| e.travel);
+                if ui.add(egui::Label::new(RichText::new(text).small().color(t.text)).sense(egui::Sense::click())).clicked() {
+                    *action = Some(Action::Seek(travel));
+                }
+            }
+        }
     });
     if closed {
         *action = Some(Action::StopSimulation);
@@ -1649,6 +1722,7 @@ fn run(app: &mut SolveApp, d: &mut CamPanel, action: Action, tools: &[Value], se
                 if sim.done() {
                     sim.restart();
                 } else {
+                    sim.halted = None;
                     sim.playing = !sim.playing;
                 }
             }
@@ -1657,6 +1731,36 @@ fn run(app: &mut SolveApp, d: &mut CamPanel, action: Action, tools: &[Value], se
         Action::ToEnd => {
             if let Some(sim) = d.sim.as_mut() {
                 sim.advance(f64::INFINITY);
+            }
+            Ok(Value::Null)
+        }
+        Action::ToStart => {
+            if let Some(sim) = d.sim.as_mut() {
+                sim.seek(0.0);
+            }
+            Ok(Value::Null)
+        }
+        Action::Step => {
+            if let Some(sim) = d.sim.as_mut() {
+                sim.playing = false;
+                sim.run.step();
+            }
+            Ok(Value::Null)
+        }
+        Action::Seek(travel) => {
+            if let Some(sim) = d.sim.as_mut() {
+                sim.seek(travel);
+            }
+            Ok(Value::Null)
+        }
+        Action::Chapter(by) => {
+            if let Some(sim) = d.sim.as_mut() {
+                let now = sim.run.op_index() as i64;
+                // Back from partway into an operation goes to its own start first.
+                let into = sim.run.travelled() - sim.run.start_of(sim.run.op_index()) > 1e-6;
+                let to = if by < 0 && into { now } else { now + i64::from(by) };
+                let to = to.clamp(0, sim.run.ops.len() as i64) as usize;
+                sim.seek(sim.run.start_of(to));
             }
             Ok(Value::Null)
         }
@@ -1982,8 +2086,22 @@ mod tests {
         run(&mut h.app, &mut d, Action::ToEnd, &[], &[]);
         h.app.machining = Some(d);
         let sim = h.app.machining.as_ref().unwrap().sim.as_ref().unwrap();
-        assert!(sim.done() && sim.stock.removed() > 0.0);
-        assert_eq!(super::scene_key(&h.app), None, "the toolpath lines step aside while it plays");
+        assert!(sim.done() && sim.run.stock.removed() > 0.0);
+        assert_eq!(super::scene_key(&h.app).map(|k| k.2), Some(2), "the stock, compared with the part, stands in the scene");
+        let body = h.app.machining.as_ref().unwrap().sim.as_ref().unwrap().body.clone();
+        assert!(!h.app.body_visible(&body), "in the part's place");
+        // Back to the start, a step, a seek and the next operation.
+        let mut d = h.app.machining.take().unwrap();
+        run(&mut h.app, &mut d, Action::ToStart, &[], &[]);
+        assert_eq!(d.sim.as_ref().unwrap().run.stock.removed(), 0.0);
+        run(&mut h.app, &mut d, Action::Step, &[], &[]);
+        run(&mut h.app, &mut d, Action::Step, &[], &[]);
+        let total = d.sim.as_ref().unwrap().run.total();
+        run(&mut h.app, &mut d, Action::Seek(total / 2.0), &[], &[]);
+        assert!(d.sim.as_ref().unwrap().run.stock.removed() > 0.0);
+        run(&mut h.app, &mut d, Action::Chapter(1), &[], &[]);
+        assert!(d.sim.as_ref().unwrap().done(), "past the only operation is the end");
+        h.app.machining = Some(d);
         h.frames(2);
         h.app.run("cam.face", json!({"tool": 1, "offset": 0.5})).unwrap();
         h.frames(2);

@@ -148,7 +148,18 @@
     "cam.error.table_axis": "يجب أن يتجه الوجه الذي على الطاولة على امتداد أحد محاور النموذج.",
     "cam.error.stock_too_small": "القطعة ({x} × {y} × {z} مم) لا تتسع في الخامة.",
     "cam.error.stock_size": "يجب أن يكون مقاس الخامة بين 0 و10000 مم.",
-    "cam.error.axes": "محاور الإعداد ليست متعامدة."
+    "cam.error.axes": "محاور الإعداد ليست متعامدة.",
+    "To Start": "إلى البداية",
+    "Previous Operation": "العملية السابقة",
+    "Next Operation": "العملية التالية",
+    "Compare with the part": "قارن بالقطعة",
+    "On the part": "على القطعة",
+    "Material left": "خامة متبقية",
+    "Cut too deep": "قطع زائد",
+    "cam.sim.rapid_crash": "حركة سريعة داخل الخامة عند ({x}, {y}, {z})",
+    "cam.sim.shank_crash": "ساق الأداة يحتك بالخامة عند ({x}, {y}, {z})",
+    "cam.sim.halted": "توقف: {crash}",
+    "cam.sim.crashes": "اصطدامات ({n})"
   },
   "en": {
     "Machining": "Machining",
@@ -299,7 +310,18 @@
     "cam.error.table_axis": "the face on the table must face along one of the model's axes",
     "cam.error.stock_too_small": "the part ({x} × {y} × {z} mm) doesn't fit in the stock",
     "cam.error.stock_size": "the stock's size must be between 0 and 10000 mm",
-    "cam.error.axes": "the setup's axes are not square"
+    "cam.error.axes": "the setup's axes are not square",
+    "To Start": "To Start",
+    "Previous Operation": "Previous Operation",
+    "Next Operation": "Next Operation",
+    "Compare with the part": "Compare with the part",
+    "On the part": "On the part",
+    "Material left": "Material left",
+    "Cut too deep": "Cut too deep",
+    "cam.sim.rapid_crash": "rapid into the material at ({x}, {y}, {z})",
+    "cam.sim.shank_crash": "the shank rubs on the material at ({x}, {y}, {z})",
+    "cam.sim.halted": "Stopped: {crash}",
+    "cam.sim.crashes": "Crashes ({n})"
   },
   "he": {
     "Machining": "עיבוד",
@@ -450,7 +472,18 @@
     "cam.error.table_axis": "הפאה שעל השולחן חייבת לפנות לאורך אחד מצירי המודל.",
     "cam.error.stock_too_small": "החלק ({x} × {y} × {z} מ״מ) לא נכנס בחומר הגלם.",
     "cam.error.stock_size": "מידת חומר הגלם חייבת להיות בין 0 ל־10000 מ״מ.",
-    "cam.error.axes": "צירי ההגדרה אינם ניצבים זה לזה."
+    "cam.error.axes": "צירי ההגדרה אינם ניצבים זה לזה.",
+    "To Start": "להתחלה",
+    "Previous Operation": "הפעולה הקודמת",
+    "Next Operation": "הפעולה הבאה",
+    "Compare with the part": "השוואה לחלק",
+    "On the part": "על החלק",
+    "Material left": "נותר חומר",
+    "Cut too deep": "חיתוך עמוק מדי",
+    "cam.sim.rapid_crash": "תנועה מהירה לתוך החומר ב־({x}, {y}, {z})",
+    "cam.sim.shank_crash": "השוק משפשף את החומר ב־({x}, {y}, {z})",
+    "cam.sim.halted": "נעצר: {crash}",
+    "cam.sim.crashes": "התנגשויות ({n})"
   },
   "ja": {
     "Machining": "加工",
@@ -601,7 +634,18 @@
     "cam.error.table_axis": "テーブルに接する面は、モデルのX・Y・Zいずれかの軸の向きを向いた平らな面にしてください。",
     "cam.error.stock_too_small": "部品（{x} × {y} × {z} mm）が材料に収まりません。材料を大きくしてください。",
     "cam.error.stock_size": "材料の大きさは0〜10000mmにしてください。",
-    "cam.error.axes": "セットアップの軸が直交していません。"
+    "cam.error.axes": "セットアップの軸が直交していません。",
+    "To Start": "最初へ",
+    "Previous Operation": "前の工程",
+    "Next Operation": "次の工程",
+    "Compare with the part": "完成形と比べる",
+    "On the part": "ぴったり",
+    "Material left": "削り残し",
+    "Cut too deep": "削りすぎ",
+    "cam.sim.rapid_crash": "早送りで材料に突っ込みます（{x}, {y}, {z}）",
+    "cam.sim.shank_crash": "刃より上のシャンクが材料に当たります（{x}, {y}, {z}）",
+    "cam.sim.halted": "停止しました：{crash}",
+    "cam.sim.crashes": "衝突（{n}件）"
   },
   "vi": {
     "Machining": "Gia công",
@@ -752,7 +796,18 @@
     "cam.error.table_axis": "Mặt đặt lên bàn phải hướng theo một trục của mô hình.",
     "cam.error.stock_too_small": "Chi tiết ({x} × {y} × {z} mm) không vừa trong phôi.",
     "cam.error.stock_size": "Kích thước phôi phải từ 0 đến 10000 mm.",
-    "cam.error.axes": "Các trục của thiết lập không vuông góc với nhau."
+    "cam.error.axes": "Các trục của thiết lập không vuông góc với nhau.",
+    "To Start": "Về đầu",
+    "Previous Operation": "Nguyên công trước",
+    "Next Operation": "Nguyên công sau",
+    "Compare with the part": "So sánh với chi tiết",
+    "On the part": "Đúng chi tiết",
+    "Material left": "Còn vật liệu",
+    "Cut too deep": "Cắt quá sâu",
+    "cam.sim.rapid_crash": "chạy nhanh đâm vào vật liệu tại ({x}, {y}, {z})",
+    "cam.sim.shank_crash": "chuôi dao cọ vào vật liệu tại ({x}, {y}, {z})",
+    "cam.sim.halted": "Đã dừng: {crash}",
+    "cam.sim.crashes": "Va chạm ({n})"
   },
   "zh": {
     "Machining": "加工",
@@ -903,6 +958,17 @@
     "cam.error.table_axis": "贴台面必须朝向模型的某一坐标轴方向。",
     "cam.error.stock_too_small": "零件（{x} × {y} × {z} mm）放不进毛坯。",
     "cam.error.stock_size": "毛坯尺寸必须在 0 到 10000 mm 之间。",
-    "cam.error.axes": "设置的坐标轴互不垂直。"
+    "cam.error.axes": "设置的坐标轴互不垂直。",
+    "To Start": "到开头",
+    "Previous Operation": "上一工序",
+    "Next Operation": "下一工序",
+    "Compare with the part": "与零件比较",
+    "On the part": "到位",
+    "Material left": "余料",
+    "Cut too deep": "过切",
+    "cam.sim.rapid_crash": "快速移动撞入材料（{x}, {y}, {z}）",
+    "cam.sim.shank_crash": "刀柄碰到材料（{x}, {y}, {z}）",
+    "cam.sim.halted": "已停止：{crash}",
+    "cam.sim.crashes": "碰撞（{n}）"
   }
 }

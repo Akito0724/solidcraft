@@ -489,6 +489,10 @@ pub struct CamSimSteps {
     pub tool: u32,
     /// The cutter's radius (mm).
     pub radius: f64,
+    /// `flat` (an end mill) or `drill` (a 118° point).
+    pub cutter: String,
+    /// How far up the cutter its flutes reach (mm): the shank is above.
+    pub flute_length: f64,
     /// Each point as [x, y, z, rapid]: `rapid` is 1 when the move to it is a rapid, else 0.
     pub points: Vec<[f64; 4]>,
 }
@@ -497,6 +501,8 @@ pub struct CamSimSteps {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct CamSimulation {
     pub setup: u64,
+    /// The body the setup machines.
+    pub body: String,
     /// The machine frame in the model.
     pub frame: CamFrame,
     /// The stock's corners in machine coordinates (mm).

@@ -95,8 +95,9 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&SIMULATION_CONTRACT)
         .output(output_schema_for::<CamSimulation>)
         .params(
-            "setup? (default the only one), step? (mm, default 0.5) → setup, frame {origin, x, y, z}, stock_min, stock_max (machine), operations \
-             [{operation, name, tool, radius, points [[x,y,z,rapid]…]}], truncated?; machine coordinates, to cut a height map along",
+            "setup? (default the only one), step? (mm, default 0.5) → setup, body, frame {origin, x, y, z}, stock_min, stock_max (machine), operations \
+             [{operation, name, tool, radius, cutter: flat|drill, flute_length, points [[x,y,z,rapid]…]}], truncated?; machine coordinates, to cut a \
+             height map along",
         ),
     CommandSpec::new("cam.face", "Face Milling", crate::checked!("cam.face", face_cmd))
         .icon("offset_face")
@@ -934,12 +935,25 @@ fn simulation_cmd(s: &mut Session, p: &Value) -> Result<Value> {
             budget -= 1;
             points.push([round(p.x, 4), round(p.y, 4), round(p.z, 4), if rapid { 1.0 } else { 0.0 }]);
         }
-        operations.push(CamSimSteps { operation: op.id, name: op.name.clone(), tool: op.tool, radius: round(t.tool.diameter / 2.0, 4), points });
+        let cutter = match t.tool.kind {
+            solidcraft_cam::ToolKind::Drill => "drill",
+            solidcraft_cam::ToolKind::FlatEndmill => "flat",
+        };
+        operations.push(CamSimSteps {
+            operation: op.id,
+            name: op.name.clone(),
+            tool: op.tool,
+            radius: round(t.tool.diameter / 2.0, 4),
+            cutter: cutter.into(),
+            flute_length: round(t.tool.flute_length, 4),
+            points,
+        });
     }
     reply(
         cmd,
         CamSimulation {
             setup,
+            body: s.doc.cam.setup(setup).map(|x| x.body.clone()).unwrap_or_default(),
             frame: frame_info(&plan.frame),
             stock_min: plan.stock_min.map(|v| round(v, 4)),
             stock_max: plan.stock_max.map(|v| round(v, 4)),
@@ -1256,9 +1270,16 @@ mod tests {
         let op = &sim["operations"][0];
         let points: Vec<[f64; 4]> = serde_json::from_value(op["points"].clone()).unwrap();
         let radius = op["radius"].as_f64().unwrap();
-        let mut stock = solidcraft_cam::Stock::new([-33.0, -23.0, -11.0], [33.0, 23.0, 0.0], 0.5).unwrap();
+        assert_eq!(op["cutter"], "flat");
+        assert_eq!(op["flute_length"], 20.0);
+        assert_eq!(sim["body"], s.doc.cam.setups[0].body.as_str());
+        let stock = solidcraft_cam::Stock::new([-33.0, -23.0, -11.0], [33.0, 23.0, 0.0], 0.5).unwrap();
         let moves: Vec<(solidcraft_cam::P3, bool)> = points.iter().map(|p| (solidcraft_cam::P3::new(p[0], p[1], p[2]), p[3] > 0.5)).collect();
-        solidcraft_cam::sim::cut(&mut stock, radius, &moves, 0, moves.len());
+        let cutter = solidcraft_cam::Cutter::flat(radius, 20.0);
+        let mut run = solidcraft_cam::Run::new(stock, vec![solidcraft_cam::RunOp { name: "contour".into(), cutter, points: moves }]);
+        run.advance(f64::INFINITY, false);
+        assert!(run.events.is_empty(), "nothing crashes: {:?}", run.events);
+        let stock = &run.stock;
         let at = |x: f64, y: f64| {
             let i = ((x - stock.x0) / stock.dx).round() as usize;
             let j = ((y - stock.y0) / stock.dy).round() as usize;
