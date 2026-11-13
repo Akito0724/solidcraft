@@ -33,7 +33,7 @@ pub use post::{PostOptions, by_tool, grbl};
 pub use setup::{Frame, cross};
 pub use sim::{Crash, Cutter, Event, Quad, Run, RunOp, Shade, Stock, surface};
 pub use tool::{Cutting, Holder, HolderSection, LibraryLink, Material, Preset, Tool, ToolDetails, ToolKind};
-pub use toolpath::{Move, P3, Toolpath};
+pub use toolpath::{Move, P3, Toolpath, slow_corners};
 
 /// Why a toolpath could not be made.
 #[derive(Clone, Debug, PartialEq)]

@@ -538,3 +538,39 @@ fn a_tool_keeps_its_shape_holder_and_cutting_data_per_material() {
     run.advance(f64::INFINITY, false);
     assert!(run.events.iter().any(|e| e.crash == Crash::Holder), "{:?}", run.events);
 }
+
+#[test]
+fn feeds_slow_through_corners_and_tight_arcs() {
+    use crate::toolpath::{Move, slow_corners};
+    let tool = Tool::endmill(1, 6.0, 2, 20.0);
+    let p = |x: f64, y: f64| P3::new(x, y, -1.0);
+    let mut path = Toolpath {
+        name: "square".into(),
+        cutting: Cutting::starting(Material::Wood, &tool),
+        tool,
+        safe_z: 5.0,
+        moves: vec![
+            Move::Rapid(P3::new(0.0, 0.0, 5.0)),
+            Move::Feed { to: p(0.0, 0.0), feed: 100.0 },
+            Move::Feed { to: p(20.0, 0.0), feed: 1000.0 },
+            // A square corner: the first 6 mm slowed, the rest at speed.
+            Move::Feed { to: p(20.0, 20.0), feed: 1000.0 },
+            // Straight on: no slowing.
+            Move::Feed { to: p(20.0, 30.0), feed: 1000.0 },
+            // A tight arc, slowed all round; a wide one at speed.
+            Move::Arc { to: p(22.0, 32.0), center: (22.0, 30.0), ccw: false, feed: 1000.0 },
+            Move::Arc { to: p(42.0, 12.0), center: (22.0, 12.0), ccw: false, feed: 1000.0 },
+        ],
+    };
+    slow_corners(&mut path, 45.0, 0.5, 6.0);
+    let feeds: Vec<f64> = path
+        .moves
+        .iter()
+        .filter_map(|m| match m {
+            Move::Feed { feed, .. } | Move::Arc { feed, .. } => Some(*feed),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(feeds, vec![100.0, 1000.0, 500.0, 1000.0, 1000.0, 500.0, 1000.0], "{:?}", path.moves);
+    assert_eq!(path.moves.get(3).map(|m| m.to()), Some(p(20.0, 6.0)));
+}

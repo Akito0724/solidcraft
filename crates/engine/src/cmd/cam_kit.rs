@@ -32,8 +32,20 @@ const WALL_FINISH: Finish = Finish { passes: 1, stepover: 0.2, spring: false };
 /// What clearing round a contour leaves on its wall for the contour itself (mm).
 const AROUND_LEAVE: f64 = 0.25;
 
-/// The toolpath for `job`: a contour or a pocket by the toolkit, anything else as before.
+/// Where a cut turns more sharply than this (degrees), its first tool diameter goes slower, by
+/// [`CORNER_FEED`]; and so does an arc tighter than the tool's diameter.
+const CORNER_ANGLE: f64 = 45.0;
+const CORNER_FEED: f64 = 0.6;
+
+/// The toolpath for `job`: a contour or a pocket by the toolkit, anything else as before; the
+/// feed slowed through sharp corners.
 pub(crate) fn generate(job: &Job, clearance: &Clearance) -> Result<Toolpath, String> {
+    let mut path = planned_path(job, clearance)?;
+    solidcraft_cam::slow_corners(&mut path, CORNER_ANGLE, CORNER_FEED, job.tool.diameter);
+    Ok(path)
+}
+
+fn planned_path(job: &Job, clearance: &Clearance) -> Result<Toolpath, String> {
     match &job.operation {
         Operation::Contour(o) => {
             let profile = planned(job, clearance, |entry| contour(job, o, clearance, entry))?;

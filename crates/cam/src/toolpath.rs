@@ -211,3 +211,68 @@ impl Builder {
         }
     }
 }
+
+/// The unit direction in XY a move leaves `from` in, and arrives at its end in (an arc's
+/// tangents); `None` for a move with no length seen from above.
+fn directions(from: P3, m: &Move) -> Option<((f64, f64), (f64, f64))> {
+    let unit = |x: f64, y: f64| {
+        let n = x.hypot(y);
+        (n > 1e-9).then(|| (x / n, y / n))
+    };
+    match *m {
+        Move::Rapid(_) => None,
+        Move::Feed { to, .. } => unit(to.x - from.x, to.y - from.y).map(|d| (d, d)),
+        Move::Arc { to, center, ccw, .. } => {
+            // The tangent turns a quarter from the radius, the way the arc goes.
+            let tangent = |p: P3| {
+                let (rx, ry) = (p.x - center.0, p.y - center.1);
+                if ccw { unit(-ry, rx) } else { unit(ry, -rx) }
+            };
+            Some((tangent(from)?, tangent(to)?))
+        }
+    }
+}
+
+/// Slow the feed through corners: where a cut turns by more than `angle` (degrees) from the one
+/// before it, its first `length` mm go at `factor` × its feed; an arc tighter than `length` in
+/// radius goes at that feed all the way. Rapids and moves straight up or down end a run.
+pub fn slow_corners(path: &mut Toolpath, angle: f64, factor: f64, length: f64) {
+    if !(factor.is_finite() && factor > 0.0 && factor < 1.0 && length.is_finite() && length > 0.0) {
+        return;
+    }
+    let limit = angle.to_radians().cos();
+    let mut out = Vec::with_capacity(path.moves.len());
+    let mut at: Option<P3> = None;
+    let mut heading: Option<(f64, f64)> = None;
+    for m in std::mem::take(&mut path.moves) {
+        let from = at.unwrap_or(m.to());
+        at = Some(m.to());
+        let Some((start, end)) = directions(from, &m) else {
+            heading = None;
+            out.push(m);
+            continue;
+        };
+        let turned = heading.is_some_and(|h| h.0 * start.0 + h.1 * start.1 < limit);
+        heading = Some(end);
+        match m {
+            Move::Feed { to, feed } if turned => {
+                let len = (to.x - from.x).hypot(to.y - from.y);
+                if len > length * 1.5 {
+                    let t = length / len;
+                    let mid = P3::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, from.z + (to.z - from.z) * t);
+                    out.push(Move::Feed { to: mid, feed: feed * factor });
+                    out.push(Move::Feed { to, feed });
+                } else {
+                    out.push(Move::Feed { to, feed: feed * factor });
+                }
+            }
+            Move::Arc { to, center, ccw, feed } => {
+                let r = (to.x - center.0).hypot(to.y - center.1);
+                let slow = turned || r < length;
+                out.push(Move::Arc { to, center, ccw, feed: if slow { feed * factor } else { feed } });
+            }
+            other => out.push(other),
+        }
+    }
+    path.moves = out;
+}
