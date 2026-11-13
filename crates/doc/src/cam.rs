@@ -423,7 +423,8 @@ impl Document {
             OpSpec::Pocket { approach, .. } | OpSpec::Contour { approach, .. } => *approach,
             OpSpec::Face { .. } | OpSpec::Drill { .. } => Approach::default(),
         };
-        Ok(Job { name: op.name.clone(), operation, tool, cutting, approach })
+        let stock = Some([(plan.stock_min[0], plan.stock_min[1]), (plan.stock_max[0], plan.stock_max[1])]);
+        Ok(Job { name: op.name.clone(), operation, tool, cutting, approach, stock })
     }
 
     /// The face at `pick` seen down the machine's Z (`frame`): its boundary in machine XY (outer

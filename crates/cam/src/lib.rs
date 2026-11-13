@@ -26,7 +26,9 @@ pub mod toolpath;
 mod tests;
 
 pub use geom2::{Loop, Region, Vertex};
-pub use ops::{Approach, Clearance, ContourOp, Depths, DrillOp, Entry, FaceOp, Finish, Job, Operation, PocketOp, Side, Tabs, check, generate};
+pub use ops::{
+    Approach, Clearance, Clearing, ContourOp, Depths, DrillOp, Entry, FaceOp, Finish, Job, Operation, PocketOp, Side, Tabs, check, generate,
+};
 pub use post::{PostOptions, by_tool, grbl};
 pub use setup::{Frame, cross};
 pub use sim::{Crash, Cutter, Event, Quad, Run, RunOp, Shade, Stock, surface};

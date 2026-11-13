@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use serde_json::Value;
-use solidcraft_cam::{Approach, Cutting, Entry, Finish, Material, Side, Tabs, Tool, ToolKind, Toolpath};
+use solidcraft_cam::{Approach, Clearing, Cutting, Entry, Finish, Material, Side, Tabs, Tool, ToolKind, Toolpath};
 use solidcraft_doc::cam::{CamOperation, CamSetup, FixedStock, GeoPick, OpSpec, SetupAxes, StockMargin, WorkOrigin, WorkZero, axis_along};
 
 use super::CommandSpec;
@@ -719,6 +719,19 @@ fn summary(op: &CamOperation, path: std::result::Result<&Toolpath, &String>) -> 
         finish_passes: approach.and_then(|a| a.finish).map(|f| f.passes),
         finish_stepover: approach.and_then(|a| a.finish).map(|f| f.stepover),
         spring_pass: approach.and_then(|a| a.finish).is_some_and(|f| f.spring),
+        clearing: approach.map(|a| {
+            match (a.clearing, matches!(op.spec, OpSpec::Pocket { .. })) {
+                (None, true) => "auto",
+                (None, false) => "none",
+                (Some(Clearing::Offset), _) => "offset",
+                (Some(Clearing::Adaptive { .. }), _) => "adaptive",
+            }
+            .to_string()
+        }),
+        load: approach.and_then(|a| match a.clearing {
+            Some(Clearing::Adaptive { load }) => Some(round(load * 100.0, 3)),
+            _ => None,
+        }),
     }
 }
 
@@ -1299,9 +1312,31 @@ fn approach(cmd: &str, q: &CamOperationParams, old: Option<&OpSpec>, contour: bo
             other => return Err(bad(cmd, format!("`entry` must be auto, plunge, ramp or helix, not {other}"))),
         };
     }
-    let asks_contour = q.lead.is_some() || q.finish_passes.is_some() || q.finish_stepover.is_some() || q.spring_pass.is_some();
-    if asks_contour && !contour {
-        return Err(bad(cmd, "leads and finishing passes are for a contour"));
+    if q.lead.is_some_and(|r| r != 0.0) && !contour {
+        return Err(bad(cmd, "leads are for a contour"));
+    }
+    let load_was = match a.clearing {
+        Some(Clearing::Adaptive { load }) => load,
+        _ => super::cam_kit::LOAD,
+    };
+    let load = match q.load {
+        Some(v) if v.is_finite() && v > 0.0 && v <= 100.0 => v / 100.0,
+        Some(_) => return Err(bad(cmd, "`load` must be above 0 and at most 100 (% of the diameter)")),
+        None => load_was,
+    };
+    let clearing = match q.clearing.as_deref() {
+        Some(c) => Some(c),
+        None if q.load.is_some() => Some("adaptive"),
+        None => None,
+    };
+    if let Some(c) = clearing {
+        a.clearing = match (c, contour) {
+            ("auto", false) | ("none", true) => None,
+            ("adaptive", _) => Some(Clearing::Adaptive { load }),
+            ("offset", false) => Some(Clearing::Offset),
+            (other, true) => return Err(bad(cmd, format!("a contour's `clearing` must be none or adaptive, not {other}"))),
+            (other, false) => return Err(bad(cmd, format!("a pocket's `clearing` must be auto, adaptive or offset, not {other}"))),
+        };
     }
     if let Some(r) = q.lead {
         a.lead = match r {
@@ -1319,7 +1354,8 @@ fn approach(cmd: &str, q: &CamOperationParams, old: Option<&OpSpec>, contour: bo
             None => was.stepover,
         };
         let spring = q.spring_pass.unwrap_or(was.spring);
-        a.finish = (passes > 0).then_some(Finish { passes, stepover, spring });
+        // A pocket keeps "none" (its default is one after adaptive clearing); a contour forgets it.
+        a.finish = (passes > 0 || !contour).then_some(Finish { passes, stepover, spring });
     }
     Ok(a)
 }
@@ -1501,6 +1537,23 @@ mod tests {
         assert_eq!(pocket["operation"]["entry"], "auto");
         let lines = s.execute("cam.toolpaths", &json!({})).unwrap();
         assert!(lines.to_string().len() > 100);
+        // Cleared adaptively by default, its walls finished once; in rings when asked.
+        assert_eq!(pocket["operation"]["clearing"], "auto");
+        let rings = s
+            .execute("cam.preview", &json!({"type": "pocket", "tool": 1, "face": {"at": [10, 10, 10]}, "clearing": "offset", "finish_passes": 0}))
+            .unwrap();
+        assert!(rings["operation"]["error"].is_null(), "{rings}");
+        assert_eq!(rings["operation"]["clearing"], "offset");
+        assert_eq!(rings["operation"]["finish_passes"], 0);
+        let light = s.execute("cam.preview", &json!({"type": "pocket", "tool": 1, "face": {"at": [10, 10, 10]}, "load": 10})).unwrap();
+        assert!(light["operation"]["error"].is_null(), "{light}");
+        assert_eq!((light["operation"]["clearing"].as_str(), light["operation"]["load"].as_f64()), (Some("adaptive"), Some(10.0)));
+        // A contour clearing the stock round the block first, then cutting it out.
+        let around = s.execute("cam.preview", &json!({"type": "contour", "tool": 1, "face": {"at": [10, 10, 10]}, "clearing": "adaptive"})).unwrap();
+        assert!(around["operation"]["error"].is_null(), "{around}");
+        assert!(around["cuts"].as_array().unwrap().len() > 2);
+        assert!(s.execute("cam.contour", &json!({"tool": 1, "face": {"at": [10, 10, 10]}, "clearing": "offset"})).is_err());
+        assert!(s.execute("cam.pocket", &json!({"tool": 1, "face": {"at": [10, 10, 10]}, "load": 0})).is_err());
         // Leads are for contours; unknown entries and steep angles are refused.
         assert!(s.execute("cam.pocket", &json!({"tool": 1, "face": {"at": [10, 10, 10]}, "lead": 2})).is_err());
         assert!(s.execute("cam.contour", &json!({"tool": 1, "face": {"at": [10, 10, 10]}, "entry": "spiral"})).is_err());

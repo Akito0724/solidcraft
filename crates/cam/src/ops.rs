@@ -144,6 +144,18 @@ pub struct Finish {
     pub spring: bool,
 }
 
+/// How a pocket, or the stock around a contour, is cleared.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
+pub enum Clearing {
+    /// Rings offset in from the walls.
+    Offset,
+    /// Adaptive: the tool's engagement held near `load` (its width of cut, a fraction of the
+    /// diameter) all the way, turning smoothly.
+    Adaptive { load: f64 },
+}
+
 /// How a contour or a pocket goes into the material and along its wall. The default leaves the
 /// choice to the planner.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -156,9 +168,14 @@ pub struct Approach {
     /// from the part.
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub lead: Option<f64>,
-    /// A contour: finishing passes at full depth.
+    /// Finishing passes at full depth round a contour, or round a pocket's walls after it is
+    /// cleared (a pocket's `None`: one, 0.2 mm, after adaptive clearing).
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub finish: Option<Finish>,
+    /// A pocket: how it is cleared (`None`: adaptively, in rings where that can't go). A
+    /// contour: the stock around it cleared adaptively first (`None`: only the profile is cut).
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub clearing: Option<Clearing>,
 }
 
 impl Approach {
@@ -176,6 +193,8 @@ pub struct Job {
     pub cutting: Cutting,
     /// How a contour or a pocket enters (a planner that knows how: see the engine).
     pub approach: Approach,
+    /// The stock seen from above, in machine coordinates: low and high corners.
+    pub stock: Option<[(f64, f64); 2]>,
 }
 
 /// The toolpath for `job`.

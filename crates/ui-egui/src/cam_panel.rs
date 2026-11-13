@@ -120,6 +120,10 @@ pub struct CamPanel {
     pub finish_passes: String,
     pub finish_stepover: String,
     pub spring_pass: bool,
+    /// How a pocket (an index into [`POCKET_CLEARINGS`]) or the stock round a contour (into
+    /// [`CONTOUR_CLEARINGS`]) is cleared, and adaptive clearing's load (% of the diameter).
+    pub clearing: usize,
+    pub load: String,
     /// The last refusal.
     pub error: Option<String>,
     /// What the last export wrote.
@@ -235,6 +239,8 @@ impl Default for CamPanel {
             finish_passes: String::new(),
             finish_stepover: String::new(),
             spring_pass: false,
+            clearing: 0,
+            load: String::new(),
             peck: "0".into(),
             error: None,
             notice: None,
@@ -355,6 +361,9 @@ impl CamPanel {
         self.finish_passes = op["finish_passes"].as_u64().map(|n| n.to_string()).unwrap_or_default();
         self.finish_stepover = num(&op["finish_stepover"]);
         self.spring_pass = op["spring_pass"].as_bool().unwrap_or(false);
+        let clearings: &[&str] = if op["kind"] == "contour" { &CONTOUR_CLEARINGS } else { &POCKET_CLEARINGS };
+        self.clearing = clearings.iter().position(|c| Some(*c) == op["clearing"].as_str()).unwrap_or(0);
+        self.load = num(&op["load"]);
         let c = &op["cutting"];
         self.rpm = num(&c["spindle_rpm"]);
         self.feed = num(&c["feed"]);
@@ -588,6 +597,26 @@ impl CamPanel {
                 if let Some(v) = number(&self.helix_radius).filter(|_| entry == "helix") {
                     p["helix_radius"] = json!(v);
                 }
+            }
+        }
+        if kind == "pocket" || kind == "contour" {
+            let clearings: &[&str] = if kind == "contour" { &CONTOUR_CLEARINGS } else { &POCKET_CLEARINGS };
+            let clearing = clearings.get(self.clearing).copied().unwrap_or(clearings.first().copied().unwrap_or("auto"));
+            p["clearing"] = json!(clearing);
+            if clearing == "adaptive"
+                && let Some(v) = number(&self.load)
+            {
+                p["load"] = json!(v);
+            }
+        }
+        if kind == "pocket" && !self.finish_passes.trim().is_empty() {
+            let passes = self.finish_passes.trim().parse::<u32>().unwrap_or(0);
+            p["finish_passes"] = json!(passes);
+            if passes > 0 {
+                if let Some(v) = number(&self.finish_stepover) {
+                    p["finish_stepover"] = json!(v);
+                }
+                p["spring_pass"] = json!(self.spring_pass);
             }
         }
         if kind == "contour" {
@@ -1132,6 +1161,11 @@ const TABS: [&str; 4] = ["Tool", "Geometry", "Heights", "Passes"];
 /// How a contour or pocket goes down into the material.
 const ENTRIES: [&str; 4] = ["auto", "plunge", "ramp", "helix"];
 const ENTRY_LABELS: [&str; 4] = ["Automatic", "Plunge", "Ramp", "Helix"];
+/// How a pocket is cleared, and whether a contour clears the stock round it first.
+const POCKET_CLEARINGS: [&str; 3] = ["auto", "adaptive", "offset"];
+const POCKET_CLEARING_LABELS: [&str; 3] = ["Automatic", "Adaptive", "Offset"];
+const CONTOUR_CLEARINGS: [&str; 2] = ["none", "adaptive"];
+const CONTOUR_CLEARING_LABELS: [&str; 2] = ["Profile only", "Clear around it first"];
 
 /// The icon of an operation's row and dialog.
 fn kind_icon(kind: &str) -> &'static str {
@@ -1502,6 +1536,27 @@ fn operation_body(ui: &mut egui::Ui, d: &mut CamPanel, kind: &str, tools: &[Valu
             }
             crate::ui_kit::text(ui, tr("cam.panel.cutting_hint"), crate::ui_kit::Text::Hint("tool"));
             if kind == "pocket" || kind == "contour" {
+                ui.add_space(t.space_4);
+                let (clearings, labels): (&[&str], &[&str]) =
+                    if kind == "contour" { (&CONTOUR_CLEARINGS, &CONTOUR_CLEARING_LABELS) } else { (&POCKET_CLEARINGS, &POCKET_CLEARING_LABELS) };
+                if d.clearing >= clearings.len() {
+                    d.clearing = 0;
+                }
+                crate::ui_kit::row(ui, "Clearing", |ui| crate::ui_kit::dropdown(ui, "cam_op_clearing", &mut d.clearing, labels));
+                let clearing = clearings.get(d.clearing).copied().unwrap_or("auto");
+                if clearing == "adaptive" {
+                    field(ui, "Load (% of diameter)", &mut d.load, "15");
+                }
+                if clearing != "offset" && clearing != "none" {
+                    crate::ui_kit::text(ui, tr("cam.panel.adaptive_hint"), crate::ui_kit::Text::Hint("tool"));
+                }
+                if kind == "pocket" {
+                    let default = if clearing == "offset" { 0 } else { 1 };
+                    field(ui, "Wall finishing passes", &mut d.finish_passes, if default == 0 { "0" } else { "1" });
+                    if d.finish_passes.trim().parse::<u32>().unwrap_or(default) > 0 {
+                        field(ui, "Finish stepover", &mut d.finish_stepover, "0.2");
+                    }
+                }
                 ui.add_space(t.space_4);
                 crate::ui_kit::row(ui, "Entry", |ui| crate::ui_kit::dropdown(ui, "cam_op_entry", &mut d.entry, &ENTRY_LABELS));
                 let entry = ENTRIES.get(d.entry).copied().unwrap_or("auto");

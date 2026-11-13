@@ -416,9 +416,17 @@ pub struct CamOperationParams {
     /// Contour: a quarter arc of this radius into and out of each pass (mm); 0 removes it.
     #[serde(default)]
     pub lead: Option<f64>,
-    /// Contour: finishing passes at full depth; 0 removes them.
+    /// Contour: finishing passes at full depth; pocket: round its walls once cleared (default
+    /// one after adaptive clearing); 0 removes them.
     #[serde(default)]
     pub finish_passes: Option<u32>,
+    /// Pocket: `auto` (default: adaptive, in rings where that can't go), `adaptive` or
+    /// `offset`. Contour: `adaptive` clears the stock around it first; `none` (default) doesn't.
+    #[serde(default)]
+    pub clearing: Option<String>,
+    /// Adaptive clearing's width of cut, in % of the tool's diameter (default 15).
+    #[serde(default)]
+    pub load: Option<f64>,
     /// Contour: how far apart the finishing passes are (mm, default 0.2).
     #[serde(default)]
     pub finish_stepover: Option<f64>,
@@ -520,6 +528,12 @@ pub struct CamOpSummary {
     pub finish_stepover: Option<f64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub spring_pass: bool,
+    /// Pocket: `auto`, `adaptive` or `offset`; contour: `none` or `adaptive`; and the adaptive
+    /// width of cut (% of the diameter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clearing: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load: Option<f64>,
 }
 
 /// Move an operation earlier (`by` < 0) or later among its setup's operations: the order they

@@ -228,7 +228,15 @@
     "cam.tool_name.bull": "فريزة {d} مم بحافة R{r}",
     "cam.tool_name.vbit": "لقمة V ‏{a}°",
     "cam.sim.holder_crash": "الحامل يصطدم بالخامة عند ({x}, {y}, {z})",
-    "help.cam.library": "يحفظ أدواتك وحواملك على هذا الحاسوب لكل التصاميم. انسخ واحدة إلى التصميم لاستخدامها؛ يحتفظ التصميم بنسخته أينما فُتح."
+    "help.cam.library": "يحفظ أدواتك وحواملك على هذا الحاسوب لكل التصاميم. انسخ واحدة إلى التصميم لاستخدامها؛ يحتفظ التصميم بنسخته أينما فُتح.",
+    "Clearing": "طريقة التفريغ",
+    "Adaptive": "تكيفي",
+    "Offset": "إزاحة",
+    "Profile only": "المحيط فقط",
+    "Clear around it first": "فرّغ ما حوله أولًا",
+    "Load (% of diameter)": "الحمل (% من القطر)",
+    "Wall finishing passes": "مرات تشطيب الجدار",
+    "cam.panel.adaptive_hint": "يحافظ التفريغ التكيفي على حمل الأداة ثابتًا، فلا تهتز الماكينة الخفيفة عند الزوايا: يناسب 3018 نسبة 10–15 %."
   },
   "en": {
     "Machining": "Machining",
@@ -459,7 +467,15 @@
     "cam.tool_name.bull": "{d} mm R{r} bull nose",
     "cam.tool_name.vbit": "{a}° V-bit",
     "cam.sim.holder_crash": "the holder runs into the material at ({x}, {y}, {z})",
-    "help.cam.library": "Keeps your tools and holders on this computer for every design. Copy one into a design to use it; a design keeps its copy wherever it is opened."
+    "help.cam.library": "Keeps your tools and holders on this computer for every design. Copy one into a design to use it; a design keeps its copy wherever it is opened.",
+    "Clearing": "Clearing",
+    "Adaptive": "Adaptive",
+    "Offset": "Offset",
+    "Profile only": "Profile only",
+    "Clear around it first": "Clear around it first",
+    "Load (% of diameter)": "Load (% of diameter)",
+    "Wall finishing passes": "Wall finishing passes",
+    "cam.panel.adaptive_hint": "Adaptive keeps the tool's load even, so a light machine doesn't chatter in the corners: 10–15 % suits a 3018."
   },
   "he": {
     "Machining": "עיבוד",
@@ -690,7 +706,15 @@
     "cam.tool_name.bull": "מכרסם {d} מ״מ R{r}",
     "cam.tool_name.vbit": "מקדח V ‏{a}°",
     "cam.sim.holder_crash": "המחזיק נתקל בחומר ב־({x}, {y}, {z})",
-    "help.cam.library": "שומר את הכלים והמחזיקים במחשב הזה לכל התכנונים. העתיקו כלי לתכנון כדי להשתמש בו; התכנון שומר את העותק בכל מקום."
+    "help.cam.library": "שומר את הכלים והמחזיקים במחשב הזה לכל התכנונים. העתיקו כלי לתכנון כדי להשתמש בו; התכנון שומר את העותק בכל מקום.",
+    "Clearing": "אופן הפינוי",
+    "Adaptive": "אדפטיבי",
+    "Offset": "היסט",
+    "Profile only": "קונטור בלבד",
+    "Clear around it first": "פינוי סביבו תחילה",
+    "Load (% of diameter)": "עומס (% מהקוטר)",
+    "Wall finishing passes": "מעברי גימור לדופן",
+    "cam.panel.adaptive_hint": "אדפטיבי שומר על עומס אחיד, כך שמכונה קלה לא רוטטת בפינות: ל־3018 מתאים 10–15 %."
   },
   "ja": {
     "Machining": "加工",
@@ -921,7 +945,15 @@
     "cam.tool_name.bull": "{d}mm R{r} ブルノーズ",
     "cam.tool_name.vbit": "{a}° Vビット",
     "cam.sim.holder_crash": "ホルダーが材料に当たります（{x}, {y}, {z}）",
-    "help.cam.library": "工具とホルダーをこのPCに保存し、どのデザインからも使えるようにします。デザインに使うとコピーが保存されるので、別のPCで開いても工具情報が残ります。"
+    "help.cam.library": "工具とホルダーをこのPCに保存し、どのデザインからも使えるようにします。デザインに使うとコピーが保存されるので、別のPCで開いても工具情報が残ります。",
+    "Clearing": "削り方",
+    "Adaptive": "アダプティブ",
+    "Offset": "オフセット",
+    "Profile only": "輪郭だけ",
+    "Clear around it first": "先に周りを荒取り",
+    "Load (% of diameter)": "負荷（刃径の%）",
+    "Wall finishing passes": "壁の仕上げパス数",
+    "cam.panel.adaptive_hint": "アダプティブは刃にかかる負荷を一定に保つので、軽い機械でも角でびびりにくくなります。3018なら10〜15%が目安です。"
   },
   "vi": {
     "Machining": "Gia công",
@@ -1152,7 +1184,15 @@
     "cam.tool_name.bull": "Dao bo góc {d} mm R{r}",
     "cam.tool_name.vbit": "Dao chữ V {a}°",
     "cam.sim.holder_crash": "đầu kẹp va vào vật liệu tại ({x}, {y}, {z})",
-    "help.cam.library": "Lưu dao và đầu kẹp trên máy này cho mọi thiết kế. Sao chép vào thiết kế để dùng; thiết kế giữ bản sao ở mọi nơi."
+    "help.cam.library": "Lưu dao và đầu kẹp trên máy này cho mọi thiết kế. Sao chép vào thiết kế để dùng; thiết kế giữ bản sao ở mọi nơi.",
+    "Clearing": "Cách phá",
+    "Adaptive": "Thích ứng",
+    "Offset": "Bù khoảng",
+    "Profile only": "Chỉ biên dạng",
+    "Clear around it first": "Phá xung quanh trước",
+    "Load (% of diameter)": "Tải (% đường kính)",
+    "Wall finishing passes": "Số lượt tinh thành",
+    "cam.panel.adaptive_hint": "Thích ứng giữ tải dao đều, máy nhẹ ít rung ở góc: 3018 hợp với 10–15 %."
   },
   "zh": {
     "Machining": "加工",
@@ -1383,6 +1423,14 @@
     "cam.tool_name.bull": "{d} mm R{r} 圆鼻铣刀",
     "cam.tool_name.vbit": "{a}° V 形刀",
     "cam.sim.holder_crash": "刀柄撞到材料（{x}, {y}, {z}）",
-    "help.cam.library": "在本机保存刀具和刀柄，供所有设计使用。复制到设计后，设计会保留副本。"
+    "help.cam.library": "在本机保存刀具和刀柄，供所有设计使用。复制到设计后，设计会保留副本。",
+    "Clearing": "清角方式",
+    "Adaptive": "自适应",
+    "Offset": "偏移",
+    "Profile only": "仅轮廓",
+    "Clear around it first": "先清除周围",
+    "Load (% of diameter)": "负载（直径的%）",
+    "Wall finishing passes": "侧壁精加工次数",
+    "cam.panel.adaptive_hint": "自适应保持刀具负载均匀，轻型机床在拐角处也不易振动：3018 适合 10–15%。"
   }
 }

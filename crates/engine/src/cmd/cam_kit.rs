@@ -3,6 +3,10 @@
 //! stock's top is clear. Facing and drilling stay with `solidcraft-cam`, which also checks every
 //! job first (tool, cutting data, depths against the flutes).
 //!
+//! Pockets are cleared adaptively by default (the tool's engagement held near a set load, as a
+//! small, not very rigid mill wants), in offset rings where that can't go, and their walls then
+//! finished; a contour may first clear the stock around it adaptively.
+//!
 //! The setup's machine frame, depths and cutting data go in as the toolkit's `Cut`; its moves
 //! come back as `solidcraft-cam` moves, so the program, the gouge check and the simulation see
 //! them like any other.
@@ -10,7 +14,7 @@
 use std::f64::consts::FRAC_PI_2;
 
 use solidcore_record::{Loop2, Region2, Seg2, Vec2, Vec3};
-use solidcraft_cam::{Clearance, ContourOp, Entry, Job, Loop, Move, Operation, P3, PocketOp, Side, Toolpath};
+use solidcraft_cam::{Clearance, Clearing, ContourOp, Entry, Finish, Job, Loop, Move, Operation, P3, PocketOp, Side, Toolpath};
 use solidcraft_camkit as kit;
 
 /// The steepest a ramp or a helix goes down when none is asked for (degrees).
@@ -21,14 +25,152 @@ const HELIX_SHARE: f64 = 0.75;
 const TOLERANCE: f64 = 0.01;
 /// How steeply the tool climbs onto and off a tab (degrees).
 const TAB_RAMP: f64 = 45.0;
+/// Adaptive clearing's width of cut when none is asked for, as a share of the diameter.
+pub(crate) const LOAD: f64 = 0.15;
+/// A pocket's wall finish after adaptive clearing when none is asked for.
+const WALL_FINISH: Finish = Finish { passes: 1, stepover: 0.2, spring: false };
+/// What clearing round a contour leaves on its wall for the contour itself (mm).
+const AROUND_LEAVE: f64 = 0.25;
 
 /// The toolpath for `job`: a contour or a pocket by the toolkit, anything else as before.
 pub(crate) fn generate(job: &Job, clearance: &Clearance) -> Result<Toolpath, String> {
     match &job.operation {
-        Operation::Contour(o) => planned(job, clearance, |entry| contour(job, o, clearance, entry)),
-        Operation::Pocket(o) => planned(job, clearance, |entry| pocket(job, o, clearance, entry)),
+        Operation::Contour(o) => {
+            let profile = planned(job, clearance, |entry| contour(job, o, clearance, entry))?;
+            match job.approach.clearing {
+                Some(Clearing::Adaptive { load }) => Ok(joined(around(job, o, clearance, load)?, profile)),
+                _ => Ok(profile),
+            }
+        }
+        Operation::Pocket(o) => match job.approach.clearing {
+            Some(Clearing::Offset) => cleared_in_rings(job, o, clearance),
+            Some(Clearing::Adaptive { load }) => adaptive_pocket(job, o, clearance, load),
+            // Adaptive where it can go; rings where it can't (a pocket too small for its helix).
+            None => adaptive_pocket(job, o, clearance, LOAD).or_else(|why| cleared_in_rings(job, o, clearance).map_err(|_| why)),
+        },
         Operation::Face(_) | Operation::Drill(_) => solidcraft_cam::generate(job, clearance).map_err(|e| e.to_string()),
     }
+}
+
+/// The finishing passes round a pocket's walls: as asked, or after adaptive clearing one.
+fn pocket_finish(job: &Job, adaptive: bool) -> Option<Finish> {
+    match job.approach.finish {
+        Some(f) => (f.passes > 0).then_some(f),
+        None => adaptive.then_some(WALL_FINISH),
+    }
+}
+
+/// A pocket in offset rings, leaving its wall finish on the walls, then finishing them.
+fn cleared_in_rings(job: &Job, o: &PocketOp, clearance: &Clearance) -> Result<Toolpath, String> {
+    let finish = pocket_finish(job, false);
+    let leave = finish.map_or(0.0, |f| f64::from(f.passes) * f.stepover);
+    let rings = planned(job, clearance, |entry| pocket(job, o, clearance, entry, leave))?;
+    match finish {
+        Some(f) => Ok(joined(rings, walls(job, o, clearance, f)?)),
+        None => Ok(rings),
+    }
+}
+
+/// The adaptive parameters for a width of cut of `load` × the diameter, leaving `leave` on the
+/// walls: the engagement allowed round it, the helix within the tool.
+fn adaptive_params(job: &Job, load: f64, leave: f64) -> Result<kit::adaptive::AdaptiveParams, String> {
+    if !(load.is_finite() && load > 0.0 && load <= 1.0) {
+        return Err(format!("{}: the load must be above 0 and at most the tool's diameter", job.name));
+    }
+    let d = job.tool.diameter;
+    // The engagement of a straight cut that wide, and room either side of it.
+    let engagement = (1.0 - 2.0 * load).clamp(-1.0, 1.0).acos();
+    let max = (engagement * 1.6).max(engagement + 10f64.to_radians()).min(std::f64::consts::PI);
+    let angle = match job.approach.entry {
+        Some(Entry::Ramp { angle } | Entry::Helix { angle, .. }) => angle,
+        _ => ENTRY_ANGLE,
+    };
+    Ok(kit::adaptive::AdaptiveParams {
+        optimal_load: load * d,
+        min_engagement: engagement * 0.25,
+        max_engagement: max.max(5f64.to_radians()),
+        stock_to_leave: leave,
+        tolerance: TOLERANCE,
+        helix_diameter: d * 0.8,
+        ramp_angle: angle.clamp(0.5, 45.0).to_radians(),
+        climb: true,
+    })
+}
+
+/// A pocket cleared adaptively, then its walls finished.
+fn adaptive_pocket(job: &Job, o: &PocketOp, clearance: &Clearance, load: f64) -> Result<Toolpath, String> {
+    solidcraft_cam::check(job, clearance).map_err(|e| e.to_string())?;
+    let finish = pocket_finish(job, true);
+    let leave = finish.map_or(0.0, |f| f64::from(f.passes) * f.stepover);
+    let region = Region2 { outer: loop2(&o.region.outer), holes: o.region.islands.iter().map(loop2).collect() };
+    let params = adaptive_params(job, load, leave)?;
+    let top = o.depths.top;
+    let cleared = kit::adaptive::adaptive(&[region], &tool(job), &params, &cut(job, clearance, top, o.depths.bottom)).map_err(|e| words(&e))?;
+    let cleared = converted(job, clearance, &cleared.path);
+    match finish {
+        Some(f) => Ok(joined(cleared, walls(job, o, clearance, f)?)),
+        None => Ok(cleared),
+    }
+}
+
+/// The finishing passes round a pocket's walls (and its islands) at its full depth.
+fn walls(job: &Job, o: &PocketOp, clearance: &Clearance, f: Finish) -> Result<Toolpath, String> {
+    let region = Region2 { outer: loop2(&o.region.outer), holes: o.region.islands.iter().map(loop2).collect() };
+    let params = kit::ContourParams { side: kit::Side::Inside, climb: true, stock_to_leave: 0.0, tolerance: TOLERANCE, ramp_angle: 0.0 };
+    let opts = kit::ContourOptions {
+        lead: None,
+        entry: Some(kit::Entry::Ramp { angle: ENTRY_ANGLE.to_radians() }),
+        tabs: None,
+        finish_passes: f.passes as usize,
+        finish_stepover: f.stepover,
+        spring_pass: f.spring,
+        linking: kit::Linking::StayDown,
+        vertical_lead: None,
+    };
+    let top = o.depths.top;
+    let mut c = cut(job, clearance, top, o.depths.bottom);
+    // The pocket is cleared: one level goes round in the air it left, then the finish.
+    c.stepdown = (top - o.depths.bottom).max(c.stepdown);
+    let path = kit::contour_with(&[region], &tool(job), &params, &opts, &c, &above(top)).map_err(|e| words(&e))?;
+    Ok(converted(job, clearance, &path))
+}
+
+/// The stock around a contour cleared adaptively, down to its tabs' tops where it has tabs,
+/// leaving [`AROUND_LEAVE`] on the wall for the contour.
+fn around(job: &Job, o: &ContourOp, clearance: &Clearance, load: f64) -> Result<Toolpath, String> {
+    let profile = loop2(&o.profile);
+    let region = match o.side {
+        Side::Outside => {
+            let [(x0, y0), (x1, y1)] = job.stock.ok_or_else(|| format!("{}: clearing around a contour needs the setup's stock", job.name))?;
+            // The stock and a tool's width of open air round it, the part a hole in it.
+            let m = job.tool.diameter;
+            let (a, b, c, d) = (Vec2::new(x0 - m, y0 - m), Vec2::new(x1 + m, y0 - m), Vec2::new(x1 + m, y1 + m), Vec2::new(x0 - m, y1 + m));
+            Region2 {
+                outer: Loop2 { segs: vec![Seg2::Line { a, b }, Seg2::Line { a: b, b: c }, Seg2::Line { a: c, b: d }, Seg2::Line { a: d, b: a }] },
+                holes: vec![profile],
+            }
+        }
+        Side::Inside => Region2 { outer: profile, holes: Vec::new() },
+        Side::On => return Err(format!("{}: only a contour inside or outside the profile can clear around it", job.name)),
+    };
+    let stock = kit::adaptive::StockModel {
+        rect: job.stock.map(|[(x0, y0), (x1, y1)]| [Vec2::new(x0, y0), Vec2::new(x1, y1)]),
+        ..kit::adaptive::StockModel::default()
+    };
+    let params = adaptive_params(job, load, AROUND_LEAVE)?;
+    let top = o.depths.top;
+    let bottom = o.depths.bottom + o.tabs.map_or(0.0, |t| t.height);
+    if bottom >= top {
+        return Err(format!("{}: nothing to clear around it above its tabs", job.name));
+    }
+    let cleared = kit::adaptive::adaptive_in(&[region], &tool(job), &params, &cut(job, clearance, top, bottom), &stock).map_err(|e| words(&e))?;
+    Ok(converted(job, clearance, &cleared.path))
+}
+
+/// One toolpath after the other.
+fn joined(mut a: Toolpath, b: Toolpath) -> Toolpath {
+    a.moves.extend(b.moves);
+    a
 }
 
 /// Check the job, then plan it with the entry asked for; with none asked for, the gentlest that
@@ -157,10 +299,10 @@ fn contour(job: &Job, o: &ContourOp, clearance: &Clearance, entry: kit::Entry) -
     kit::contour_with(&[region], &tool(job), &params, &opts, &cut(job, clearance, top, o.depths.bottom), &above(top))
 }
 
-fn pocket(job: &Job, o: &PocketOp, clearance: &Clearance, entry: kit::Entry) -> kit::Result<kit::Toolpath> {
+fn pocket(job: &Job, o: &PocketOp, clearance: &Clearance, entry: kit::Entry, leave: f64) -> kit::Result<kit::Toolpath> {
     let region = Region2 { outer: loop2(&o.region.outer), holes: o.region.islands.iter().map(loop2).collect() };
     let stepover = job.cutting.stepover * job.tool.diameter;
-    let params = kit::PocketParams { stepover, climb: true, stock_to_leave: 0.0, tolerance: TOLERANCE, ramp_angle: 0.0 };
+    let params = kit::PocketParams { stepover, climb: true, stock_to_leave: leave, tolerance: TOLERANCE, ramp_angle: 0.0 };
     let opts = kit::PocketOptions { entry: Some(entry), linking: kit::Linking::StayDown };
     let top = o.depths.top;
     kit::pocket_with(&[region], &tool(job), &params, &opts, &cut(job, clearance, top, o.depths.bottom), &above(top))
