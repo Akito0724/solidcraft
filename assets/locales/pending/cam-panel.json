@@ -252,7 +252,8 @@
     "cam.lib.pick_a_tool": "اختر أداة لعرضها.",
     "cam.lib.starting_dim": "الرمادي: القيمة الابتدائية للخامة؛ اضبط قيمك عند تحرير الأداة.",
     "At least": "على الأقل",
-    "At most": "على الأكثر"
+    "At most": "على الأكثر",
+    "Libraries": "المكتبات"
   },
   "en": {
     "Machining": "Machining",
@@ -507,7 +508,8 @@
     "cam.lib.pick_a_tool": "Pick a tool to see it.",
     "cam.lib.starting_dim": "Grey: the starting value for the material; set your own when editing the tool.",
     "At least": "At least",
-    "At most": "At most"
+    "At most": "At most",
+    "Libraries": "Libraries"
   },
   "he": {
     "Machining": "עיבוד",
@@ -762,7 +764,8 @@
     "cam.lib.pick_a_tool": "בחרו כלי כדי לראות אותו.",
     "cam.lib.starting_dim": "באפור: הערך ההתחלתי לחומר; קבעו ערכים משלכם בעריכת הכלי.",
     "At least": "לפחות",
-    "At most": "לכל היותר"
+    "At most": "לכל היותר",
+    "Libraries": "ספריות"
   },
   "ja": {
     "Machining": "加工",
@@ -1017,7 +1020,8 @@
     "cam.lib.pick_a_tool": "工具を選ぶと表示されます。",
     "cam.lib.starting_dim": "グレーの数字は材料ごとの初期値です。工具の編集で自分の値を入れられます。",
     "At least": "最小",
-    "At most": "最大"
+    "At most": "最大",
+    "Libraries": "ライブラリ"
   },
   "vi": {
     "Machining": "Gia công",
@@ -1272,7 +1276,8 @@
     "cam.lib.pick_a_tool": "Chọn một dao để xem.",
     "cam.lib.starting_dim": "Màu xám: giá trị đầu của vật liệu; đặt giá trị riêng khi sửa dao.",
     "At least": "Từ",
-    "At most": "Đến"
+    "At most": "Đến",
+    "Libraries": "Thư viện"
   },
   "zh": {
     "Machining": "加工",
@@ -1527,6 +1532,7 @@
     "cam.lib.pick_a_tool": "选择刀具即可查看。",
     "cam.lib.starting_dim": "灰色为该材料的初始值；编辑刀具时可设定自己的值。",
     "At least": "至少",
-    "At most": "至多"
+    "At most": "至多",
+    "Libraries": "库"
   }
 }

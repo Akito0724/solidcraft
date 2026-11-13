@@ -575,7 +575,10 @@ pub enum Do {
 /// The tool table's columns: picture, number, name, diameter, flute length, overall length,
 /// kind; and their widths.
 const COLUMNS: [&str; 7] = ["", "No.", "Name", "Diameter", "Flute length", "Overall length", "Kind"];
-const WIDTHS: [f32; 7] = [24.0, 34.0, 210.0, 62.0, 62.0, 62.0, 110.0];
+/// Their widths; the name takes what is left.
+const WIDTHS: [f32; 7] = [40.0, 48.0, 0.0, 76.0, 76.0, 76.0, 128.0];
+/// Right-aligned (numbers) or not.
+const RIGHT: [bool; 7] = [false, false, false, true, true, true, false];
 
 fn kind_label(info: &Value) -> &'static str {
     match KINDS.iter().position(|k| Some(*k) == info["kind"].as_str()).unwrap_or(0) {
@@ -954,8 +957,66 @@ fn cutting_rows(info: &Value) -> Vec<(usize, [Option<(f64, bool)>; 5])> {
         .collect()
 }
 
-fn cell(ui: &mut egui::Ui, width: f32, text: RichText) {
-    ui.add_sized([width, 18.0], egui::Label::new(text).truncate());
+/// `text` in a cell `width` wide, at the left or right, cut short with an ellipsis.
+fn cell(ui: &mut egui::Ui, width: f32, height: f32, text: RichText, right: bool) {
+    let layout = if right { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) };
+    ui.allocate_ui_with_layout(Vec2::new(width, height), layout, |ui| {
+        ui.set_width(width);
+        ui.add(egui::Label::new(text).truncate());
+    });
+}
+
+/// A filled, outlined rounded box behind `rect`.
+fn panel(ui: &egui::Ui, rect: Rect, fill: egui::Color32) {
+    let t = Tokens::get();
+    ui.painter().rect(rect, t.radius_md, fill, Stroke::new(1.0, t.dialog_rule), egui::StrokeKind::Inside);
+}
+
+/// A small heading over a group, in capitals' place a little weight and the dim colour.
+fn group_title(ui: &mut egui::Ui, label: &str) {
+    let t = Tokens::get();
+    ui.add_space(t.space_4);
+    ui.label(RichText::new(tr_label(label)).size(t.font_small).strong().color(t.text_dim));
+    ui.add_space(t.space_2);
+}
+
+/// One entry of the left side's list: its name, a count beside it; picked or not.
+fn source_row(ui: &mut egui::Ui, label: &str, count: usize, on: bool) -> bool {
+    let t = Tokens::get();
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), egui::Sense::click());
+    let fill = if on {
+        t.selected_bg
+    } else if response.hovered() {
+        t.control_fill
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(rect, t.radius_sm, fill);
+    if on {
+        ui.painter().rect_filled(Rect::from_min_size(rect.min, Vec2::new(3.0, rect.height())), t.radius_sm, t.accent);
+    }
+    let body = egui::FontId::proportional(t.font_body);
+    ui.painter().text(
+        rect.left_center() + Vec2::new(12.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        tr_label(label),
+        body,
+        if on { t.accent } else { t.text },
+    );
+    // The count, in a pill at the right.
+    let count = count.to_string();
+    let small = egui::FontId::proportional(t.font_small);
+    let galley = ui.painter().layout_no_wrap(count, small, t.text_dim);
+    let pill = Rect::from_center_size(rect.right_center() - Vec2::new(18.0, 0.0), galley.size() + Vec2::new(12.0, 4.0));
+    ui.painter().rect_filled(pill, t.radius_xl, t.panel_header);
+    ui.painter().galley(pill.center() - galley.size() / 2.0, galley, t.text_dim);
+    response.clicked()
+}
+
+/// A toolbar button: a framed label, greyed out when it can't be used.
+fn tool_button(ui: &mut egui::Ui, label: &str, enabled: bool, primary: bool) -> bool {
+    let style = if primary { crate::ui_kit::Button::Primary } else { crate::ui_kit::Button::Normal };
+    ui.add_enabled_ui(enabled, |ui| crate::ui_kit::button(ui, tr_label(label), style).clicked()).inner
 }
 
 /// The library's window, and the editor when something is being changed. `design` are the
@@ -968,214 +1029,332 @@ pub fn window(ctx: &egui::Context, lib: &mut Library, design: &[Value]) -> Optio
     let picked = lib.picked(design);
     let closed =
         crate::ui_kit::Window::new(egui::Id::unique("sc_cam_library"), "library", tr_label("Tool Library")).cards(4.6).show_body(ctx, |ui| {
-            ui.horizontal_top(|ui| {
-                // Left: the lists.
-                ui.vertical(|ui| {
-                    ui.set_width(170.0);
-                    crate::ui_kit::hint_field(ui, &mut lib.search, tr_label("Search"));
-                    ui.add_space(t.space_4);
-                    for (source, label, count) in [
-                        (Source::Design, "This design", design.len()),
-                        (Source::Library, "My library", lib.tools().len()),
-                        (Source::Holders, "Holders", holders.len()),
-                    ] {
-                        let text = RichText::new(format!("{}  ({count})", tr_label(label)));
-                        if ui.selectable_label(lib.source == source, text).clicked() {
-                            action = Some(Do::Source(source));
-                        }
+            // The whole body laid out in rects: the list on the left, filters on the right, the
+            // table and its cutting data between them.
+            let width = ui.available_width().max(760.0);
+            let height = (ui.available_height() - 48.0).clamp(460.0, 720.0);
+            let (body, _) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
+            let gap = t.space_8;
+            let left = Rect::from_min_size(body.min, Vec2::new(200.0, height));
+            let right = Rect::from_min_max(Pos2::new(body.max.x - 250.0, body.min.y), body.max);
+            let middle = Rect::from_min_max(Pos2::new(left.max.x + gap, body.min.y), Pos2::new(right.min.x - gap, body.max.y));
+            let toolbar = Rect::from_min_size(middle.min, Vec2::new(middle.width(), 40.0));
+            let data_height = 180.0;
+            let table = Rect::from_min_max(Pos2::new(middle.min.x, toolbar.max.y + gap), Pos2::new(middle.max.x, middle.max.y - data_height - gap));
+            let data = Rect::from_min_max(Pos2::new(middle.min.x, table.max.y + gap), middle.max);
+            panel(ui, left, t.panel_header);
+            panel(ui, right, t.panel_header);
+            panel(ui, table, t.panel);
+            panel(ui, data, t.panel);
+            let inset = |r: Rect| r.shrink(t.space_8);
+
+            // Left: search, the lists, import and export.
+            ui.scope_builder(egui::UiBuilder::new().max_rect(inset(left)).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
+                crate::ui_kit::hint_field(ui, &mut lib.search, tr_label("Search"));
+                group_title(ui, "Libraries");
+                for (source, label, count) in [
+                    (Source::Design, "This design", design.len()),
+                    (Source::Library, "My library", lib.tools().len()),
+                    (Source::Holders, "Holders", holders.len()),
+                ] {
+                    if source_row(ui, label, count, lib.source == source) {
+                        action = Some(Do::Source(source));
                     }
-                    ui.add_space(t.space_4);
-                    if crate::ui_kit::button(ui, tr_label("Import…"), crate::ui_kit::Button::Small).clicked() {
-                        action = Some(Do::Import);
-                    }
-                    if crate::ui_kit::button(ui, tr_label("Export…"), crate::ui_kit::Button::Small).clicked() {
-                        action = Some(Do::Export);
-                    }
-                    if let Some(path) = lib.data.as_ref().map(|d| text(&d["path"])).filter(|p| !p.is_empty()) {
-                        ui.label(RichText::new(solidcraft_ui_text::format("cam.lib.path", &[("path", &path)])).small().color(t.text_dim));
-                    }
-                });
-                ui.separator();
-                // Middle: the toolbar, the table, the cutting data.
-                ui.vertical(|ui| {
-                    ui.set_width(WIDTHS.iter().sum::<f32>() + 30.0);
+                }
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                     ui.horizontal(|ui| {
-                        let has = lib.selected.is_some();
-                        for (label, what, enabled) in
-                            [("New", Do::New, true), ("Edit", Do::Edit, has), ("Duplicate", Do::Duplicate, has), ("Delete", Do::Delete, has)]
-                        {
-                            if ui.add_enabled(enabled, egui::Button::new(RichText::new(tr_label(label)).small())).clicked() {
-                                action = Some(what);
-                            }
+                        if crate::ui_kit::button(ui, tr_label("Export…"), crate::ui_kit::Button::Small).clicked() {
+                            action = Some(Do::Export);
                         }
-                        match lib.source {
-                            Source::Library => {
-                                if ui
-                                    .add_enabled(lib.selected.is_some(), egui::Button::new(RichText::new(tr_label("Use in This Design")).small()))
-                                    .clicked()
-                                {
-                                    action = Some(Do::CopyToDesign);
-                                }
-                            }
-                            Source::Design => {
-                                if ui
-                                    .add_enabled(lib.selected.is_some(), egui::Button::new(RichText::new(tr_label("Keep in Library")).small()))
-                                    .clicked()
-                                {
-                                    action = Some(Do::KeepInLibrary);
-                                }
-                            }
-                            Source::Holders => {}
+                        if crate::ui_kit::button(ui, tr_label("Import…"), crate::ui_kit::Button::Small).clicked() {
+                            action = Some(Do::Import);
                         }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if crate::ui_kit::button(ui, tr_label("Clear Filters"), crate::ui_kit::Button::Small).clicked() {
-                                action = Some(Do::ClearFilters);
-                            }
-                        });
                     });
+                });
+            });
+
+            // The toolbar.
+            ui.scope_builder(egui::UiBuilder::new().max_rect(toolbar).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
+                let has = lib.selected.is_some();
+                if tool_button(ui, "New", true, true) {
+                    action = Some(Do::New);
+                }
+                for (label, what) in [("Edit", Do::Edit), ("Duplicate", Do::Duplicate), ("Delete", Do::Delete)] {
+                    if tool_button(ui, label, has, false) {
+                        action = Some(what);
+                    }
+                }
+                ui.add_space(t.space_8);
+                match lib.source {
+                    Source::Library => {
+                        if tool_button(ui, "Use in This Design", has, false) {
+                            action = Some(Do::CopyToDesign);
+                        }
+                    }
+                    Source::Design => {
+                        if tool_button(ui, "Keep in Library", has, false) {
+                            action = Some(Do::KeepInLibrary);
+                        }
+                    }
+                    Source::Holders => {}
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::ui_kit::button(ui, tr_label("Clear Filters"), crate::ui_kit::Button::Small).clicked() {
+                        action = Some(Do::ClearFilters);
+                    }
+                });
+            });
+
+            // The table: a header band, then the rows.
+            let header = Rect::from_min_size(table.min, Vec2::new(table.width(), 30.0));
+            ui.painter().rect_filled(header.shrink(1.0), egui::CornerRadius { nw: t.radius_md, ne: t.radius_md, sw: 0, se: 0 }, t.panel_header);
+            ui.painter().line_segment([header.left_bottom(), header.right_bottom()], Stroke::new(1.0, t.dialog_rule));
+            let numbered = lib.source == Source::Design;
+            let name_width =
+                (table.width() - 24.0 - WIDTHS.iter().enumerate().filter(|(i, _)| *i != 1 || numbered).map(|(_, w)| *w).sum::<f32>()).max(120.0);
+            let widths: Vec<f32> = WIDTHS.iter().enumerate().map(|(i, w)| if i == 2 { name_width } else { *w }).collect();
+            if lib.source == Source::Holders {
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(header.shrink2(Vec2::new(12.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    |ui| {
+                        ui.label(RichText::new(tr_label("Holders")).size(t.font_small).strong().color(t.text_dim));
+                    },
+                );
+            } else {
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(header.shrink2(Vec2::new(12.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        for (i, name) in COLUMNS.iter().enumerate() {
+                            if i == 1 && !numbered {
+                                continue;
+                            }
+                            let w = widths.get(i).copied().unwrap_or(60.0);
+                            let arrow = if lib.sort.0 == i { if lib.sort.1 { " ▼" } else { " ▲" } } else { "" };
+                            let label = format!("{}{arrow}", if name.is_empty() { "" } else { tr_label(name) });
+                            let color = if lib.sort.0 == i { t.accent } else { t.text_dim };
+                            let layout = if RIGHT.get(i).copied().unwrap_or(false) {
+                                egui::Layout::right_to_left(egui::Align::Center)
+                            } else {
+                                egui::Layout::left_to_right(egui::Align::Center)
+                            };
+                            let r = ui.allocate_ui_with_layout(Vec2::new(w, 28.0), layout, |ui| {
+                                ui.set_width(w);
+                                ui.add(egui::Label::new(RichText::new(label).size(t.font_small).strong().color(color)).sense(egui::Sense::click()))
+                            });
+                            if r.inner.clicked() && i > 0 {
+                                lib.sort = if lib.sort.0 == i { (i, !lib.sort.1) } else { (i, false) };
+                            }
+                        }
+                    },
+                );
+            }
+            let rows_rect = Rect::from_min_max(Pos2::new(table.min.x + 1.0, header.max.y + 1.0), table.max - Vec2::splat(1.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rows_rect).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
+                egui::ScrollArea::vertical().id_salt("sc_cam_library_table").auto_shrink([false, false]).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let empty = match lib.source {
+                        Source::Holders if holders.is_empty() => Some(tr("cam.lib.no_holders")),
+                        Source::Holders => None,
+                        Source::Design if rows.is_empty() => Some(tr("cam.lib.design_empty")),
+                        _ if rows.is_empty() && lib.tools().is_empty() => Some(tr("cam.lib.empty")),
+                        _ if rows.is_empty() => Some(tr("cam.lib.none_shown")),
+                        _ => None,
+                    };
+                    if let Some(hint) = empty {
+                        let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), rows_rect.height() - 8.0), egui::Sense::hover());
+                        let picture = Rect::from_center_size(r.center() - Vec2::new(0.0, 30.0), Vec2::new(30.0, 70.0));
+                        draw(ui.painter(), picture, &sample(0), false);
+                        ui.painter().text(
+                            r.center() + Vec2::new(0.0, 22.0),
+                            egui::Align2::CENTER_CENTER,
+                            hint,
+                            egui::FontId::proportional(t.font_body),
+                            t.text_dim,
+                        );
+                        return;
+                    }
                     if lib.source == Source::Holders {
-                        egui::ScrollArea::vertical().id_salt("sc_cam_library_holders").max_height(300.0).min_scrolled_height(300.0).show(ui, |ui| {
-                            if holders.is_empty() {
-                                ui.label(RichText::new(tr("cam.lib.no_holders")).small().color(t.text_dim));
+                        for (k, h) in holders.iter().enumerate() {
+                            let id = text(&h["id"]);
+                            let on = lib.selected.as_deref() == Some(id.as_str());
+                            let (r, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), egui::Sense::click());
+                            let fill = if on {
+                                t.selected_bg
+                            } else if response.hovered() {
+                                t.control_fill
+                            } else if k % 2 == 1 {
+                                t.panel_header.gamma_multiply(0.5)
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
+                            ui.painter().rect_filled(r, 0.0, fill);
+                            let sections: Vec<String> =
+                                h["sections"].as_array().into_iter().flatten().map(|s| format!("⌀{} × {}", num(&s[0]), num(&s[1]))).collect();
+                            let body = egui::FontId::proportional(t.font_body);
+                            ui.painter().text(
+                                r.left_center() + Vec2::new(14.0, 0.0),
+                                egui::Align2::LEFT_CENTER,
+                                text(&h["name"]),
+                                body.clone(),
+                                if on { t.accent } else { t.text },
+                            );
+                            ui.painter().text(
+                                r.left_center() + Vec2::new(160.0, 0.0),
+                                egui::Align2::LEFT_CENTER,
+                                sections.join("  +  "),
+                                body,
+                                t.text_dim,
+                            );
+                            if response.double_clicked() {
+                                action = Some(Do::Edit);
+                            } else if response.clicked() {
+                                action = Some(Do::Select(id));
                             }
-                            for h in &holders {
-                                let id = text(&h["id"]);
-                                let sections: Vec<String> =
-                                    h["sections"].as_array().into_iter().flatten().map(|s| format!("⌀{}×{}", num(&s[0]), num(&s[1]))).collect();
-                                let label = format!("{}   {}", text(&h["name"]), sections.join(" + "));
-                                let r = ui.selectable_label(lib.selected.as_deref() == Some(id.as_str()), label);
-                                if r.double_clicked() {
-                                    action = Some(Do::Edit);
-                                } else if r.clicked() {
-                                    action = Some(Do::Select(id));
+                        }
+                        return;
+                    }
+                    for (k, (key, info)) in rows.iter().enumerate() {
+                        let on = lib.selected.as_deref() == Some(key.as_str());
+                        let (r, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 38.0), egui::Sense::click());
+                        let fill = if on {
+                            t.selected_bg
+                        } else if response.hovered() {
+                            t.control_fill
+                        } else if k % 2 == 1 {
+                            t.panel_header.gamma_multiply(0.5)
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        };
+                        ui.painter().rect_filled(r, 0.0, fill);
+                        if on {
+                            ui.painter().rect_filled(Rect::from_min_size(r.min, Vec2::new(3.0, r.height())), 0.0, t.accent);
+                        }
+                        ui.scope_builder(
+                            egui::UiBuilder::new().max_rect(r.shrink2(Vec2::new(12.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                let color = if on { t.accent } else { t.text };
+                                let w = |i: usize| widths.get(i).copied().unwrap_or(60.0);
+                                let (pic, _) = ui.allocate_exact_size(Vec2::new(w(0), 34.0), egui::Sense::hover());
+                                if let Some(shape) = Shape::from_info(info) {
+                                    draw(ui.painter(), Rect::from_center_size(pic.center(), Vec2::new(16.0, 34.0)), &shape, false);
                                 }
-                            }
-                        });
-                    } else {
-                        // The header: a click sorts by the column, again turns it round.
-                        ui.horizontal(|ui| {
-                            for (i, (name, w)) in COLUMNS.iter().zip(WIDTHS).enumerate() {
-                                if i == 1 && lib.source != Source::Design {
-                                    continue;
+                                if numbered {
+                                    cell(ui, w(1), 38.0, RichText::new(format!("T{}", text(&info["number"]))).strong().color(color), false);
                                 }
-                                let arrow = if lib.sort.0 == i { if lib.sort.1 { " ▼" } else { " ▲" } } else { "" };
-                                let label = RichText::new(format!("{}{arrow}", if name.is_empty() { "" } else { tr_label(name) })).small().strong();
-                                if ui.add_sized([w, 18.0], egui::Button::new(label).frame(false)).clicked() && i > 0 {
-                                    lib.sort = if lib.sort.0 == i { (i, !lib.sort.1) } else { (i, false) };
-                                }
-                            }
-                        });
-                        egui::ScrollArea::vertical().id_salt("sc_cam_library_table").max_height(260.0).min_scrolled_height(260.0).show(ui, |ui| {
-                            if rows.is_empty() {
-                                let hint = match lib.source {
-                                    Source::Design => tr("cam.lib.design_empty"),
-                                    _ if lib.tools().is_empty() => tr("cam.lib.empty"),
-                                    _ => tr("cam.lib.none_shown"),
-                                };
-                                ui.label(RichText::new(hint).small().color(t.text_dim));
-                            }
-                            for (key, info) in &rows {
-                                let selected = lib.selected.as_deref() == Some(key.as_str());
-                                let inner = ui.horizontal(|ui| {
-                                    let shape = Shape::from_info(info);
-                                    thumbnail(ui, shape.as_ref(), Vec2::new(WIDTHS[0], 30.0));
-                                    let color = if selected { t.accent } else { t.text };
-                                    if lib.source == Source::Design {
-                                        cell(ui, WIDTHS[1], RichText::new(format!("T{}", text(&info["number"]))).color(color));
-                                    }
-                                    cell(ui, WIDTHS[2], RichText::new(crate::cam_panel::tool_name(&text(&info["name"]))).color(color));
-                                    cell(ui, WIDTHS[3], RichText::new(format!("{} mm", num(&info["diameter"]))).color(color));
-                                    cell(ui, WIDTHS[4], RichText::new(format!("{} mm", num(&info["flute_length"]))).color(color));
-                                    let overall = num(&info["overall_length"]);
-                                    cell(
-                                        ui,
-                                        WIDTHS[5],
-                                        RichText::new(if overall.is_empty() { "—".into() } else { format!("{overall} mm") }).color(color),
-                                    );
-                                    cell(ui, WIDTHS[6], RichText::new(tr_label(kind_label(info))).color(t.text_dim));
-                                });
-                                let rect = inner.response.rect;
-                                let response = ui.interact(rect, egui::Id::unique(("sc_cam_lib_row", key)), egui::Sense::click());
-                                if selected {
-                                    ui.painter().rect_filled(rect, 2.0, t.accent.gamma_multiply(0.12));
-                                } else if response.hovered() {
-                                    ui.painter().rect_filled(rect, 2.0, t.text_dim.gamma_multiply(0.08));
-                                }
-                                crate::scenario::publish_handle(&format!("cam:lib:{key}"), rect.center());
-                                if response.double_clicked() {
-                                    action = Some(Do::Edit);
-                                } else if response.clicked() {
-                                    action = Some(Do::Select(key.clone()));
-                                }
-                            }
-                        });
-                        // The picked tool's cutting data for each material.
-                        ui.add_space(t.space_4);
-                        ui.label(RichText::new(tr_label("Cutting data")).small().strong().color(t.text_dim));
-                        match &picked {
-                            None => {
-                                ui.label(RichText::new(tr("cam.lib.pick_a_tool")).small().color(t.text_dim));
-                            }
-                            Some(info) => {
-                                egui::Grid::new("sc_cam_library_cutting").striped(true).show(ui, |ui| {
-                                    ui.label("");
-                                    for label in PRESET_LABELS {
-                                        ui.label(RichText::new(tr_label(label)).small().strong());
-                                    }
-                                    ui.end_row();
-                                    for (i, row) in cutting_rows(info) {
-                                        ui.label(RichText::new(tr_label(MATERIAL_LABELS.get(i).copied().unwrap_or(""))).small());
-                                        for v in row {
-                                            let label = match v {
-                                                Some((v, own)) => RichText::new(format!("{}", (v * 10.0).round() / 10.0)).small().color(if own {
-                                                    t.text
-                                                } else {
-                                                    t.text_dim
-                                                }),
-                                                None => RichText::new("—").small(),
-                                            };
-                                            ui.label(label);
-                                        }
-                                        ui.end_row();
-                                    }
-                                });
-                                ui.label(RichText::new(tr("cam.lib.starting_dim")).small().color(t.text_dim));
-                            }
+                                cell(ui, w(2), 38.0, RichText::new(crate::cam_panel::tool_name(&text(&info["name"]))).color(color), false);
+                                cell(ui, w(3), 38.0, RichText::new(format!("{} mm", num(&info["diameter"]))).color(color), true);
+                                cell(ui, w(4), 38.0, RichText::new(format!("{} mm", num(&info["flute_length"]))).color(color), true);
+                                let overall = num(&info["overall_length"]);
+                                cell(
+                                    ui,
+                                    w(5),
+                                    38.0,
+                                    RichText::new(if overall.is_empty() { "—".into() } else { format!("{overall} mm") }).color(t.text_dim),
+                                    true,
+                                );
+                                ui.add_space(16.0);
+                                cell(ui, w(6) - 16.0, 38.0, RichText::new(tr_label(kind_label(info))).color(t.text_dim), false);
+                            },
+                        );
+                        ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, t.dialog_rule.gamma_multiply(0.6)));
+                        crate::scenario::publish_handle(&format!("cam:lib:{key}"), r.center());
+                        if response.double_clicked() {
+                            action = Some(Do::Edit);
+                        } else if response.clicked() {
+                            action = Some(Do::Select(key.clone()));
                         }
                     }
                 });
-                ui.separator();
-                // Right: filters, or the picked tool.
-                ui.vertical(|ui| {
-                    ui.set_width(210.0);
-                    crate::ui_kit::segmented(ui, &mut lib.side, &["Filters", "Information"], crate::ui_kit::Segments::default());
-                    if lib.side == 0 {
-                        ui.label(RichText::new(tr_label("Kind")).small().strong().color(t.text_dim));
-                        let labels = ["Flat end mill", "Ball end mill", "Bull nose", "Drill", "V-bit"];
-                        for (k, label) in labels.iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                thumbnail(ui, Some(&sample(k)), Vec2::new(14.0, 26.0));
-                                if let Some(on) = lib.kinds.get_mut(k) {
-                                    crate::ui_kit::checkbox(ui, tr_label(label), on);
-                                }
-                            });
+            });
+
+            // Under the table: the picked tool's cutting data for each material.
+            let data_head = Rect::from_min_size(data.min, Vec2::new(data.width(), 30.0));
+            ui.painter().rect_filled(data_head.shrink(1.0), egui::CornerRadius { nw: t.radius_md, ne: t.radius_md, sw: 0, se: 0 }, t.panel_header);
+            ui.painter().line_segment([data_head.left_bottom(), data_head.right_bottom()], Stroke::new(1.0, t.dialog_rule));
+            let title = match &picked {
+                Some(info) => format!("{} — {}", tr_label("Cutting data"), crate::cam_panel::tool_name(&text(&info["name"]))),
+                None => tr_label("Cutting data").to_string(),
+            };
+            ui.painter().text(
+                data_head.left_center() + Vec2::new(12.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                title,
+                egui::FontId::proportional(t.font_small),
+                t.text_dim,
+            );
+            let data_body = Rect::from_min_max(Pos2::new(data.min.x + 12.0, data_head.max.y + 8.0), data.max - Vec2::splat(10.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(data_body).layout(egui::Layout::top_down(egui::Align::Min)), |ui| match &picked {
+                None => {
+                    ui.add_space(t.space_8);
+                    ui.label(RichText::new(tr("cam.lib.pick_a_tool")).color(t.text_dim));
+                }
+                Some(info) => {
+                    egui::Grid::new("sc_cam_library_cutting").striped(true).spacing(Vec2::new(18.0, 6.0)).show(ui, |ui| {
+                        ui.label("");
+                        for label in PRESET_LABELS {
+                            ui.label(RichText::new(tr_label(label)).size(t.font_small).strong().color(t.text_dim));
                         }
-                        ui.add_space(t.space_4);
-                        ui.label(RichText::new(tr_label("Diameter")).small().strong().color(t.text_dim));
-                        field(ui, "At least", &mut lib.min_diameter, "0");
-                        field(ui, "At most", &mut lib.max_diameter, "∞");
-                    } else if let Some(info) = &picked {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::new(210.0, 200.0), egui::Sense::hover());
-                        if let Some(s) = Shape::from_info(info) {
-                            draw(ui.painter(), rect, &s, true);
+                        ui.end_row();
+                        for (i, row) in cutting_rows(info) {
+                            ui.label(RichText::new(tr_label(MATERIAL_LABELS.get(i).copied().unwrap_or(""))).strong());
+                            for v in row {
+                                let label = match v {
+                                    Some((v, own)) => {
+                                        RichText::new(format!("{}", (v * 10.0).round() / 10.0)).color(if own { t.text } else { t.text_dim })
+                                    }
+                                    None => RichText::new("—").color(t.text_dim),
+                                };
+                                ui.label(label);
+                            }
+                            ui.end_row();
                         }
-                        ui.label(RichText::new(crate::cam_panel::tool_name(&text(&info["name"]))).strong());
+                    });
+                    ui.add_space(t.space_4);
+                    ui.label(RichText::new(tr("cam.lib.starting_dim")).size(t.font_small).color(t.text_dim));
+                }
+            });
+
+            // Right: filters, or the picked one.
+            ui.scope_builder(egui::UiBuilder::new().max_rect(inset(right)).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
+                crate::ui_kit::segmented(ui, &mut lib.side, &["Filters", "Information"], crate::ui_kit::Segments::default());
+                if lib.side == 0 {
+                    group_title(ui, "Kind");
+                    let labels = ["Flat end mill", "Ball end mill", "Bull nose", "Drill", "V-bit"];
+                    for (k, label) in labels.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            thumbnail(ui, Some(&sample(k)), Vec2::new(14.0, 28.0));
+                            ui.add_space(t.space_4);
+                            if let Some(on) = lib.kinds.get_mut(k) {
+                                crate::ui_kit::checkbox(ui, tr_label(label), on);
+                            }
+                        });
+                    }
+                    group_title(ui, "Diameter");
+                    field(ui, "At least", &mut lib.min_diameter, "0");
+                    field(ui, "At most", &mut lib.max_diameter, "∞");
+                    return;
+                }
+                ui.add_space(t.space_4);
+                let picture = |ui: &mut egui::Ui, shape: &Shape| {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 210.0), egui::Sense::hover());
+                    ui.painter().rect(rect, t.radius_md, t.panel, Stroke::new(1.0, t.dialog_rule), egui::StrokeKind::Inside);
+                    draw(ui.painter(), rect.shrink(6.0), shape, true);
+                };
+                if let Some(info) = &picked {
+                    if let Some(s) = Shape::from_info(info) {
+                        picture(ui, &s);
+                    }
+                    ui.add_space(t.space_4);
+                    ui.label(RichText::new(crate::cam_panel::tool_name(&text(&info["name"]))).strong());
+                    ui.add_space(t.space_2);
+                    egui::Grid::new("sc_cam_library_info").spacing(Vec2::new(10.0, 3.0)).show(ui, |ui| {
                         let mut line = |label: &str, value: String| {
                             if !value.is_empty() {
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(tr_label(label)).small().color(t.text_dim));
-                                    ui.label(RichText::new(value).small());
-                                });
+                                ui.label(RichText::new(tr_label(label)).size(t.font_small).color(t.text_dim));
+                                ui.label(RichText::new(value).size(t.font_small));
+                                ui.end_row();
                             }
                         };
                         line("Kind", tr_label(kind_label(info)).to_string());
@@ -1190,41 +1369,55 @@ pub fn window(ctx: &egui::Context, lib: &mut Library, design: &[Value]) -> Optio
                         line("Maker", text(&info["maker"]));
                         line("Model", text(&info["model"]));
                         line("Notes", text(&info["notes"]));
-                        if lib.source == Source::Design
-                            && let Some(id) = info["library"].as_str()
-                        {
-                            let same = lib.revision(id).is_some_and(|r| r == text(&info["revision"]));
-                            let (msg, color) = match lib.revision(id) {
-                                None => (tr("cam.lib.missing"), t.text_dim),
-                                Some(_) if same => (tr("cam.lib.same"), t.agent_ok),
-                                Some(_) => (tr("cam.lib.differs"), t.warning),
-                            };
-                            ui.label(RichText::new(msg).small().color(color));
-                        }
-                    } else if let Some(h) = (lib.source == Source::Holders).then(|| lib.picked_holder()).flatten() {
-                        let shape = Shape {
-                            holder: h["sections"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .filter_map(|s| Some((s.get(0)?.as_f64()?, s.get(1)?.as_f64()?)))
-                                .collect(),
-                            ..sample(0)
+                    });
+                    if lib.source == Source::Design
+                        && let Some(id) = info["library"].as_str()
+                    {
+                        let (msg, color) = match lib.revision(id) {
+                            None => (tr("cam.lib.missing"), t.text_dim),
+                            Some(r) if r == text(&info["revision"]) => (tr("cam.lib.same"), t.agent_ok),
+                            Some(_) => (tr("cam.lib.differs"), t.warning),
                         };
-                        let (rect, _) = ui.allocate_exact_size(Vec2::new(210.0, 200.0), egui::Sense::hover());
-                        draw(ui.painter(), rect, &shape, true);
-                        ui.label(RichText::new(text(&h["name"])).strong());
-                    } else {
-                        ui.label(RichText::new(tr("cam.lib.pick_a_tool")).small().color(t.text_dim));
+                        ui.add_space(t.space_4);
+                        ui.label(RichText::new(msg).size(t.font_small).color(color));
                     }
-                });
-            });
-            ui.horizontal(|ui| {
-                if let Some(n) = &lib.note {
-                    ui.label(RichText::new(n).small().color(t.agent_ok));
+                } else if let Some(h) = (lib.source == Source::Holders).then(|| lib.picked_holder()).flatten() {
+                    let shape = Shape {
+                        holder: h["sections"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|s| Some((s.get(0)?.as_f64()?, s.get(1)?.as_f64()?)))
+                            .collect(),
+                        ..sample(0)
+                    };
+                    picture(ui, &shape);
+                    ui.add_space(t.space_4);
+                    ui.label(RichText::new(text(&h["name"])).strong());
+                } else {
+                    ui.add_space(t.space_8);
+                    ui.label(RichText::new(tr("cam.lib.pick_a_tool")).color(t.text_dim));
                 }
+            });
+
+            // The footer: where the library is, what just happened, and Close.
+            ui.add_space(t.space_6);
+            let (line, _) = ui.allocate_exact_size(Vec2::new(width, 1.0), egui::Sense::hover());
+            ui.painter().rect_filled(line, 0.0, t.dialog_rule);
+            ui.add_space(t.space_4);
+            ui.horizontal(|ui| {
+                ui.set_width(width);
                 if let Some(e) = &lib.error {
-                    ui.label(RichText::new(crate::cam_panel::cam_text(e)).small().color(t.error));
+                    ui.label(RichText::new(crate::cam_panel::cam_text(e)).color(t.error));
+                } else if let Some(n) = &lib.note {
+                    ui.label(RichText::new(n).color(t.agent_ok));
+                } else if let Some(path) = lib.data.as_ref().map(|d| text(&d["path"])).filter(|p| !p.is_empty()) {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(solidcraft_ui_text::format("cam.lib.path", &[("path", &path)])).size(t.font_small).color(t.text_dim),
+                        )
+                        .truncate(),
+                    );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if crate::ui_kit::button(ui, tr_label("Close"), crate::ui_kit::Button::Normal).clicked() {
