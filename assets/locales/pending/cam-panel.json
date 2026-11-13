@@ -250,7 +250,9 @@
     "cam.lib.design_empty": "لا أدوات في هذا التصميم بعد: أضف بـ«جديد» أو انسخ من مكتبتك.",
     "cam.lib.none_shown": "لا توجد أداة تطابق عوامل التصفية.",
     "cam.lib.pick_a_tool": "اختر أداة لعرضها.",
-    "cam.lib.starting_dim": "الرمادي: القيمة الابتدائية للخامة؛ اضبط قيمك عند تحرير الأداة."
+    "cam.lib.starting_dim": "الرمادي: القيمة الابتدائية للخامة؛ اضبط قيمك عند تحرير الأداة.",
+    "At least": "على الأقل",
+    "At most": "على الأكثر"
   },
   "en": {
     "Machining": "Machining",
@@ -503,7 +505,9 @@
     "cam.lib.design_empty": "This design has no tools yet: add one with New, or copy one from your library.",
     "cam.lib.none_shown": "No tool matches the filters.",
     "cam.lib.pick_a_tool": "Pick a tool to see it.",
-    "cam.lib.starting_dim": "Grey: the starting value for the material; set your own when editing the tool."
+    "cam.lib.starting_dim": "Grey: the starting value for the material; set your own when editing the tool.",
+    "At least": "At least",
+    "At most": "At most"
   },
   "he": {
     "Machining": "עיבוד",
@@ -756,7 +760,9 @@
     "cam.lib.design_empty": "לתכנון אין עדיין כלים: הוסיפו עם ״חדש״ או העתיקו מהספרייה.",
     "cam.lib.none_shown": "אין כלי שמתאים למסננים.",
     "cam.lib.pick_a_tool": "בחרו כלי כדי לראות אותו.",
-    "cam.lib.starting_dim": "באפור: הערך ההתחלתי לחומר; קבעו ערכים משלכם בעריכת הכלי."
+    "cam.lib.starting_dim": "באפור: הערך ההתחלתי לחומר; קבעו ערכים משלכם בעריכת הכלי.",
+    "At least": "לפחות",
+    "At most": "לכל היותר"
   },
   "ja": {
     "Machining": "加工",
@@ -1009,7 +1015,9 @@
     "cam.lib.design_empty": "このデザインにはまだ工具がありません。「新規」で追加するか、マイライブラリからコピーしてください。",
     "cam.lib.none_shown": "フィルタに合う工具がありません。",
     "cam.lib.pick_a_tool": "工具を選ぶと表示されます。",
-    "cam.lib.starting_dim": "グレーの数字は材料ごとの初期値です。工具の編集で自分の値を入れられます。"
+    "cam.lib.starting_dim": "グレーの数字は材料ごとの初期値です。工具の編集で自分の値を入れられます。",
+    "At least": "最小",
+    "At most": "最大"
   },
   "vi": {
     "Machining": "Gia công",
@@ -1262,7 +1270,9 @@
     "cam.lib.design_empty": "Thiết kế này chưa có dao: thêm bằng Mới hoặc sao chép từ thư viện.",
     "cam.lib.none_shown": "Không có dao khớp bộ lọc.",
     "cam.lib.pick_a_tool": "Chọn một dao để xem.",
-    "cam.lib.starting_dim": "Màu xám: giá trị đầu của vật liệu; đặt giá trị riêng khi sửa dao."
+    "cam.lib.starting_dim": "Màu xám: giá trị đầu của vật liệu; đặt giá trị riêng khi sửa dao.",
+    "At least": "Từ",
+    "At most": "Đến"
   },
   "zh": {
     "Machining": "加工",
@@ -1515,6 +1525,8 @@
     "cam.lib.design_empty": "此设计还没有刀具：用“新建”添加，或从库中复制。",
     "cam.lib.none_shown": "没有符合筛选的刀具。",
     "cam.lib.pick_a_tool": "选择刀具即可查看。",
-    "cam.lib.starting_dim": "灰色为该材料的初始值；编辑刀具时可设定自己的值。"
+    "cam.lib.starting_dim": "灰色为该材料的初始值；编辑刀具时可设定自己的值。",
+    "At least": "至少",
+    "At most": "至多"
   }
 }

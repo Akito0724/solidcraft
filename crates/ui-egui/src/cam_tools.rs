@@ -1162,8 +1162,8 @@ pub fn window(ctx: &egui::Context, lib: &mut Library, design: &[Value]) -> Optio
                         }
                         ui.add_space(t.space_4);
                         ui.label(RichText::new(tr_label("Diameter")).small().strong().color(t.text_dim));
-                        field(ui, "From", &mut lib.min_diameter, "0");
-                        field(ui, "To", &mut lib.max_diameter, "∞");
+                        field(ui, "At least", &mut lib.min_diameter, "0");
+                        field(ui, "At most", &mut lib.max_diameter, "∞");
                     } else if let Some(info) = &picked {
                         let (rect, _) = ui.allocate_exact_size(Vec2::new(210.0, 200.0), egui::Sense::hover());
                         if let Some(s) = Shape::from_info(info) {
