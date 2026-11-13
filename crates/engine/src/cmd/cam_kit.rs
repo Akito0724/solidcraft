@@ -103,7 +103,11 @@ fn adaptive_params(job: &Job, load: f64, leave: f64) -> Result<kit::adaptive::Ad
         max_engagement: max.max(5f64.to_radians()),
         stock_to_leave: leave,
         tolerance: TOLERANCE,
-        helix_diameter: d * 0.8,
+        // A helix asked for keeps its size (refused when wider than the tool).
+        helix_diameter: match job.approach.entry {
+            Some(Entry::Helix { radius, .. }) if radius > 0.0 => 2.0 * radius,
+            _ => d * 0.8,
+        },
         ramp_angle: angle.clamp(0.5, 45.0).to_radians(),
         climb: true,
     })
