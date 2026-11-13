@@ -3,26 +3,197 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Add a cutter to the design's tool library, or replace the one with the same number.
+/// Add a cutter to the design's tool library, or change the one with that number (what is left
+/// out stays as it was).
 #[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(deny_unknown_fields)]
 pub struct CamToolParams {
     /// The number programs call it by (T1…T99).
     #[schemars(range(min = 1, max = 99))]
     pub number: u32,
-    /// Cutting diameter (mm).
-    pub diameter: f64,
+    #[serde(flatten)]
+    pub fields: CamToolFields,
+}
+
+/// What a cutter is: each left out keeps what it was (or, for a new tool, its default).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct CamToolFields {
+    /// Cutting diameter (mm): required for a new tool.
+    #[serde(default)]
+    pub diameter: Option<f64>,
     /// Default: 2.
     #[serde(default)]
     pub flutes: Option<u32>,
     /// How deep it can cut (mm). Default: 4 × the diameter.
     #[serde(default)]
     pub flute_length: Option<f64>,
-    /// `flat_endmill` (default) or `drill`.
+    /// `flat_endmill` (default), `ball_endmill`, `bull_nose`, `drill` or `v_bit`.
     #[serde(default)]
     pub kind: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    /// The shank's diameter, the length from tip to the end of the shank, and how far it stands
+    /// out of the holder (mm); 0 clears each.
+    #[serde(default)]
+    pub shank_diameter: Option<f64>,
+    #[serde(default)]
+    pub overall_length: Option<f64>,
+    #[serde(default)]
+    pub stickout: Option<f64>,
+    /// A bull nose's corner radius (mm).
+    #[serde(default)]
+    pub corner_radius: Option<f64>,
+    /// A drill's or V-bit's included point angle (degrees); 0 clears it.
+    #[serde(default)]
+    pub tip_angle: Option<f64>,
+    /// A V-bit's flat tip (mm); 0: pointed.
+    #[serde(default)]
+    pub tip_diameter: Option<f64>,
+    #[serde(default)]
+    pub maker: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// The holder, as cylinders from its face up; `{"sections": []}` removes it.
+    #[serde(default)]
+    pub holder: Option<CamHolderParam>,
+    /// Cutting data per material over the starting values; replaces all of them.
+    #[serde(default)]
+    pub presets: Option<Vec<CamPresetParam>>,
+}
+
+/// A tool holder: its name and its sections `[diameter, length]` (mm) from its face up.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+pub struct CamHolderParam {
+    #[serde(default)]
+    pub name: String,
+    pub sections: Vec<[f64; 2]>,
+}
+
+/// Cutting data for one material: each left out keeps the starting value.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub struct CamPresetParam {
+    /// `wood`, `acrylic` or `aluminum`.
+    pub material: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spindle_rpm: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feed: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plunge_feed: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stepdown: Option<f64>,
+    /// A fraction of the diameter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stepover: Option<f64>,
+}
+
+/// The shared tool library (a file of this computer's, every design's to take tools from).
+/// `path` names another library file; by default the user's.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CamLibraryParams {
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// Add a tool to the shared library (no `id`) or change one.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CamLibraryToolParams {
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    /// The number it takes in a design, when that number is free (default 1).
+    #[serde(default)]
+    pub number: Option<u32>,
+    #[serde(flatten)]
+    pub fields: CamToolFields,
+}
+
+/// Add a holder to the shared library (no `id`) or change one.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CamLibraryHolderParams {
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    pub sections: Vec<[f64; 2]>,
+}
+
+/// Remove a tool or a holder from the shared library (designs keep their copies).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CamLibraryDeleteParams {
+    #[serde(default)]
+    pub path: Option<String>,
+    pub id: String,
+}
+
+/// Copy a library tool into the design (as `number`, default its own or the next free one), or
+/// bring the design's copy of it up to date.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CamLibraryUseParams {
+    #[serde(default)]
+    pub path: Option<String>,
+    pub id: String,
+    #[serde(default)]
+    pub number: Option<u32>,
+}
+
+/// Put a tool of the design into the shared library: as a new entry, or over the one it was
+/// copied from.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CamLibraryStoreParams {
+    #[serde(default)]
+    pub path: Option<String>,
+    pub number: u32,
+}
+
+/// Write the shared library to a file (`to`), or add a file's tools and holders to it (`from`).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CamLibraryFileParams {
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
+    #[serde(default)]
+    pub from: Option<String>,
+}
+
+/// The shared tool library.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CamLibrary {
+    /// The file it lives in.
+    pub path: String,
+    pub tools: Vec<CamLibraryTool>,
+    pub holders: Vec<CamLibraryHolder>,
+    /// Import: how many tools and holders were added.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CamLibraryTool {
+    pub id: String,
+    /// Changes with what the tool is.
+    pub revision: String,
+    pub tool: CamToolInfo,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CamLibraryHolder {
+    pub id: String,
+    pub name: String,
+    /// `[diameter, length]` from its face up (mm).
+    pub sections: Vec<[f64; 2]>,
 }
 
 /// One cutter of the library.
@@ -30,11 +201,39 @@ pub struct CamToolParams {
 pub struct CamToolInfo {
     pub number: u32,
     pub name: String,
-    /// `flat_endmill` or `drill`.
+    /// `flat_endmill`, `ball_endmill`, `bull_nose`, `drill` or `v_bit`.
     pub kind: String,
     pub diameter: f64,
     pub flutes: u32,
     pub flute_length: f64,
+    /// The shank's diameter and how far the tool stands out of its holder, as used.
+    pub shank_diameter: f64,
+    pub stickout: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overall_length: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_radius: Option<f64>,
+    /// A drill's or V-bit's point angle (degrees), as used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tip_angle: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tip_diameter: Option<f64>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub maker: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub notes: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<CamHolderParam>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub presets: Vec<CamPresetParam>,
+    /// The shared library entry it was copied from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<String>,
+    /// Changes with what the tool is (not its number): the same as the library entry's while
+    /// the two are alike.
+    pub revision: String,
 }
 
 /// What `cam.tool` returns: the library after the change.
@@ -533,6 +732,8 @@ pub struct CamSimSteps {
     pub cutter: String,
     /// How far up the cutter its flutes reach (mm): the shank is above.
     pub flute_length: f64,
+    /// The whole tool, as the design keeps it: its shape, shank and holder.
+    pub tool_data: serde_json::Value,
     /// Each point as [x, y, z, rapid]: `rapid` is 1 when the move to it is a rapid, else 0.
     pub points: Vec<[f64; 4]>,
 }

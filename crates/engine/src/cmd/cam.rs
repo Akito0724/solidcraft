@@ -11,10 +11,10 @@ use super::CommandSpec;
 use super::design_link::absolute;
 use crate::params::bad;
 use crate::schema::cam::{
-    CamCuttingInfo, CamDeleteParams, CamDeleted, CamExportParams, CamExported, CamFrame, CamGenerateParams, CamGenerated, CamMoveParams, CamMoved,
-    CamOpSummary, CamOperationParams, CamOperationResult, CamPathLines, CamPickParam, CamPreview, CamProgram, CamSetupParams, CamSetupResult,
-    CamSetupSummary, CamSimSteps, CamSimulation, CamSimulationParams, CamTabsInfo, CamToolInfo, CamToolParams, CamToolpaths, CamToolpathsParams,
-    CamToolsResult,
+    CamCuttingInfo, CamDeleteParams, CamDeleted, CamExportParams, CamExported, CamFrame, CamGenerateParams, CamGenerated, CamHolderParam,
+    CamMoveParams, CamMoved, CamOpSummary, CamOperationParams, CamOperationResult, CamPathLines, CamPickParam, CamPresetParam, CamPreview,
+    CamProgram, CamSetupParams, CamSetupResult, CamSetupSummary, CamSimSteps, CamSimulation, CamSimulationParams, CamTabsInfo, CamToolFields,
+    CamToolInfo, CamToolParams, CamToolpaths, CamToolpathsParams, CamToolsResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -34,7 +34,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("library")
         .contract(&TOOL_CONTRACT)
         .output(output_schema_for::<CamToolsResult>)
-        .params("number: 1..99, diameter, flutes?, flute_length?, kind?: flat_endmill|drill, name? → tools; replaces the tool with that number"),
+        .params(
+            "number: 1..99, diameter (new tool), flutes?, flute_length?, kind?: flat_endmill|ball_endmill|bull_nose|drill|v_bit, name?, \
+             shank_diameter?, overall_length?, stickout?, corner_radius?, tip_angle?, tip_diameter?, maker?, model?, notes?, \
+             holder? {name, sections [[d, l]…]}, presets? [{material, spindle_rpm?, feed?, plunge_feed?, stepdown?, stepover?}] → tools; \
+             changes the tool with that number (what is left out stays)",
+        ),
     CommandSpec::new("cam.setup", "Machining Setup", crate::checked!("cam.setup", setup_cmd))
         .icon("box")
         .contract(&SETUP_CONTRACT)
@@ -127,7 +132,7 @@ const MAX_POINTS: usize = 400_000;
 /// Rapid speed assumed for time estimates (mm/min).
 const RAPID_SPEED: f64 = 3000.0;
 /// Most tools, setups and operations a design keeps.
-const MAX_ITEMS: usize = 500;
+pub(super) const MAX_ITEMS: usize = 500;
 
 fn reply(cmd: &str, reply: impl serde::Serialize) -> Result<Value> {
     serde_json::to_value(reply).map_err(|e| bad(cmd, e.to_string()))
@@ -150,18 +155,200 @@ fn material_name(m: Material) -> &'static str {
     }
 }
 
-fn tool_info(t: &Tool) -> CamToolInfo {
+pub(super) fn tool_kind_name(k: ToolKind) -> &'static str {
+    match k {
+        ToolKind::FlatEndmill => "flat_endmill",
+        ToolKind::BallEndmill => "ball_endmill",
+        ToolKind::BullNose => "bull_nose",
+        ToolKind::Drill => "drill",
+        ToolKind::VBit => "v_bit",
+    }
+}
+
+fn material_of(name: &str) -> Option<Material> {
+    Some(match name {
+        "wood" => Material::Wood,
+        "acrylic" => Material::Acrylic,
+        "aluminum" => Material::Aluminum,
+        _ => return None,
+    })
+}
+
+/// A short fingerprint of what a tool is (not its number nor where it was copied from): alike
+/// tools share it.
+pub(super) fn tool_revision(t: &Tool) -> String {
+    let mut plain = t.clone();
+    plain.number = 0;
+    plain.details.library = None;
+    let text = serde_json::to_string(&plain).unwrap_or_default();
+    // FNV-1a, 64 bits.
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+pub(super) fn holder_param(h: &solidcraft_cam::Holder) -> CamHolderParam {
+    CamHolderParam { name: h.name.clone(), sections: h.sections.iter().map(|s| [s.diameter, s.length]).collect() }
+}
+
+pub(super) fn tool_info(t: &Tool) -> CamToolInfo {
+    let d = &t.details;
+    let pointed = matches!(t.kind, ToolKind::Drill | ToolKind::VBit);
     CamToolInfo {
         number: t.number,
         name: t.name.clone(),
-        kind: match t.kind {
-            ToolKind::FlatEndmill => "flat_endmill",
-            ToolKind::Drill => "drill",
-        }
-        .into(),
+        kind: tool_kind_name(t.kind).into(),
         diameter: t.diameter,
         flutes: t.flutes,
         flute_length: t.flute_length,
+        shank_diameter: t.shank(),
+        stickout: t.stickout(),
+        overall_length: d.overall_length,
+        corner_radius: d.corner_radius.filter(|_| t.kind == ToolKind::BullNose),
+        tip_angle: pointed.then(|| t.tip_angle()),
+        tip_diameter: d.tip_diameter.filter(|_| t.kind == ToolKind::VBit),
+        maker: d.maker.clone(),
+        model: d.model.clone(),
+        notes: d.notes.clone(),
+        holder: d.holder.as_ref().map(holder_param),
+        presets: d
+            .presets
+            .iter()
+            .map(|p| CamPresetParam {
+                material: material_name(p.material).into(),
+                spindle_rpm: p.spindle_rpm,
+                feed: p.feed,
+                plunge_feed: p.plunge_feed,
+                stepdown: p.stepdown,
+                stepover: p.stepover,
+            })
+            .collect(),
+        library: d.library.as_ref().map(|l| l.id.clone()),
+        revision: tool_revision(t),
+    }
+}
+
+/// Set on `tool` what `f` gives, checking each; the tool's name follows its size and kind unless
+/// it has one of its own.
+pub(super) fn apply_tool_fields(cmd: &str, tool: &mut Tool, f: &CamToolFields) -> Result<()> {
+    let text =
+        |v: &Option<String>, max: usize| v.as_ref().map(|t| t.trim().chars().filter(|c| !c.is_control() || *c == '\n').take(max).collect::<String>());
+    let length = |what: &str, v: Option<f64>| -> Result<Option<Option<f64>>> {
+        match v {
+            None => Ok(None),
+            Some(v) if v == 0.0 => Ok(Some(None)),
+            Some(v) if v.is_finite() && v > 0.0 && v <= 500.0 => Ok(Some(Some(v))),
+            Some(_) => Err(bad(cmd, format!("`{what}` must be from 0 to 500 mm"))),
+        }
+    };
+    let generated = tool.name.is_empty() || tool.name == default_name(tool);
+    if let Some(k) = f.kind.as_deref() {
+        tool.kind = match k {
+            "flat_endmill" => ToolKind::FlatEndmill,
+            "ball_endmill" => ToolKind::BallEndmill,
+            "bull_nose" => ToolKind::BullNose,
+            "drill" => ToolKind::Drill,
+            "v_bit" => ToolKind::VBit,
+            k => return Err(bad(cmd, format!("`kind` must be flat_endmill, ball_endmill, bull_nose, drill or v_bit, not {k}"))),
+        };
+    }
+    if let Some(d) = f.diameter {
+        tool.diameter = d;
+    }
+    if let Some(n) = f.flutes {
+        tool.flutes = n;
+    }
+    if let Some(l) = f.flute_length {
+        tool.flute_length = l;
+    }
+    let d = &mut tool.details;
+    if let Some(v) = length("shank_diameter", f.shank_diameter)? {
+        d.shank_diameter = v;
+    }
+    if let Some(v) = length("overall_length", f.overall_length)? {
+        d.overall_length = v;
+    }
+    if let Some(v) = length("stickout", f.stickout)? {
+        d.stickout = v;
+    }
+    if let Some(v) = length("corner_radius", f.corner_radius)? {
+        d.corner_radius = v;
+    }
+    if let Some(v) = f.tip_angle {
+        d.tip_angle = if v == 0.0 { None } else { Some(v) };
+    }
+    if let Some(v) = f.tip_diameter {
+        d.tip_diameter = if v == 0.0 { None } else { Some(v) };
+    }
+    if let Some(v) = text(&f.maker, 80) {
+        d.maker = v;
+    }
+    if let Some(v) = text(&f.model, 80) {
+        d.model = v;
+    }
+    if let Some(v) = text(&f.notes, 2000) {
+        d.notes = v;
+    }
+    if let Some(h) = &f.holder {
+        d.holder = if h.sections.is_empty() { None } else { Some(holder_of(cmd, h)?) };
+    }
+    if let Some(presets) = &f.presets {
+        let mut out = Vec::new();
+        for p in presets.iter().take(3) {
+            let material = material_of(&p.material)
+                .ok_or_else(|| bad(cmd, format!("a preset's `material` must be wood, acrylic or aluminum, not {}", p.material)))?;
+            let ok = |v: Option<f64>| v.is_none_or(|v| v.is_finite() && v > 0.0 && v <= 100_000.0);
+            if ![p.spindle_rpm, p.feed, p.plunge_feed, p.stepdown].into_iter().all(ok) || !p.stepover.is_none_or(|v| v > 0.0 && v <= 1.0) {
+                return Err(bad(cmd, "a preset's values must be above 0 (its stepover a fraction of the diameter up to 1)"));
+            }
+            out.retain(|q: &solidcraft_cam::Preset| q.material != material);
+            out.push(solidcraft_cam::Preset {
+                material,
+                spindle_rpm: p.spindle_rpm,
+                feed: p.feed,
+                plunge_feed: p.plunge_feed,
+                stepdown: p.stepdown,
+                stepover: p.stepover,
+            });
+        }
+        d.presets = out;
+    }
+    match text(&f.name, 80).filter(|n| !n.is_empty()) {
+        Some(name) => tool.name = name,
+        None if generated || f.name.is_some() => tool.name = default_name(tool),
+        None => {}
+    }
+    if let Some(problem) = tool.problem() {
+        return Err(bad(cmd, problem));
+    }
+    Ok(())
+}
+
+/// A holder from its parameters, checked.
+pub(super) fn holder_of(cmd: &str, h: &CamHolderParam) -> Result<solidcraft_cam::Holder> {
+    let name: String = h.name.trim().chars().filter(|c| !c.is_control()).take(80).collect();
+    let holder = solidcraft_cam::Holder {
+        name: if name.is_empty() { "holder".into() } else { name },
+        sections: h.sections.iter().map(|s| solidcraft_cam::HolderSection { diameter: s[0], length: s[1] }).collect(),
+    };
+    match holder.problem() {
+        Some(p) => Err(bad(cmd, p)),
+        None => Ok(holder),
+    }
+}
+
+/// The name a tool goes by unless it is given one: its size, flutes and kind.
+fn default_name(t: &Tool) -> String {
+    let d = t.diameter;
+    match t.kind {
+        ToolKind::FlatEndmill => format!("{d} mm {}-flute end mill", t.flutes),
+        ToolKind::BallEndmill => format!("{d} mm {}-flute ball end mill", t.flutes),
+        ToolKind::BullNose => format!("{d} mm R{} bull nose", t.details.corner_radius.unwrap_or(0.0)),
+        ToolKind::Drill => format!("{d} mm drill"),
+        ToolKind::VBit => format!("{}° V-bit", t.tip_angle()),
     }
 }
 
@@ -180,24 +367,17 @@ fn tool_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     if !(1..=99).contains(&q.number) {
         return Err(bad(cmd, "`number` must be 1 to 99"));
     }
-    let kind = match q.kind.as_deref() {
-        None | Some("flat_endmill") => ToolKind::FlatEndmill,
-        Some("drill") => ToolKind::Drill,
-        Some(k) => return Err(bad(cmd, format!("`kind` must be flat_endmill or drill, not {k}"))),
-    };
-    let flutes = q.flutes.unwrap_or(2);
-    let flute_length = q.flute_length.unwrap_or(q.diameter * 4.0);
-    let mut tool = Tool::endmill(q.number, q.diameter, flutes, flute_length);
-    tool.kind = kind;
-    if let Some(name) = q.name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
-        tool.name = name.chars().take(80).collect();
-    } else if kind == ToolKind::Drill {
-        tool.name = format!("{} mm drill", q.diameter);
-    }
-    if let Some(problem) = tool.problem() {
-        return Err(bad(cmd, problem));
-    }
     let at = s.doc.cam.tools.iter().position(|t| t.number == q.number);
+    let mut tool = match at.and_then(|i| s.doc.cam.tools.get(i)) {
+        Some(t) => t.clone(),
+        None => {
+            let d = q.fields.diameter.ok_or_else(|| bad(cmd, "`diameter` is required for a new tool"))?;
+            let mut t = Tool::endmill(q.number, d, 2, d * 4.0);
+            t.name.clear();
+            t
+        }
+    };
+    apply_tool_fields(cmd, &mut tool, &q.fields)?;
     if at.is_none() && s.doc.cam.tools.len() >= MAX_ITEMS {
         return Err(bad(cmd, "the tool library is full"));
     }
@@ -768,9 +948,10 @@ fn build_operation(s: &Session, cmd: &str, q: CamOperationParams) -> Result<(Cam
     let cutting = if overrides.iter().any(Option::is_some) {
         let material = s.doc.cam.setup(setup_id).map_or(Material::Wood, |x| x.material);
         let base = kept.unwrap_or_else(|| {
-            s.doc.cam.tool(tool).map_or(Cutting { spindle_rpm: 10_000.0, feed: 500.0, plunge_feed: 150.0, stepdown: 1.0, stepover: 0.4 }, |t| {
-                Cutting::starting(material, t)
-            })
+            s.doc
+                .cam
+                .tool(tool)
+                .map_or(Cutting { spindle_rpm: 10_000.0, feed: 500.0, plunge_feed: 150.0, stepdown: 1.0, stepover: 0.4 }, |t| t.cutting(material))
         });
         Some(Cutting {
             spindle_rpm: q.spindle_rpm.unwrap_or(base.spindle_rpm),
@@ -953,8 +1134,10 @@ fn simulation_cmd(s: &mut Session, p: &Value) -> Result<Value> {
             points.push([round(p.x, 4), round(p.y, 4), round(p.z, 4), if rapid { 1.0 } else { 0.0 }]);
         }
         let cutter = match t.tool.kind {
-            solidcraft_cam::ToolKind::Drill => "drill",
-            solidcraft_cam::ToolKind::FlatEndmill => "flat",
+            ToolKind::Drill | ToolKind::VBit => "drill",
+            ToolKind::BallEndmill => "ball",
+            ToolKind::BullNose => "bull",
+            ToolKind::FlatEndmill => "flat",
         };
         operations.push(CamSimSteps {
             operation: op.id,
@@ -963,6 +1146,7 @@ fn simulation_cmd(s: &mut Session, p: &Value) -> Result<Value> {
             radius: round(t.tool.diameter / 2.0, 4),
             cutter: cutter.into(),
             flute_length: round(t.tool.flute_length, 4),
+            tool_data: serde_json::to_value(&t.tool).unwrap_or(Value::Null),
             points,
         });
     }

@@ -326,7 +326,7 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "WELDMENTS", panel: "CREATE", promoted: 1, ids: &["frame.member"] },
     Section { tab: "WELDMENTS", panel: "CONFIGURE", promoted: 2, ids: CONFIGURE },
     // Manufacture: machining a part on a CNC router (setups, 2.5D operations, G-code).
-    Section { tab: "MANUFACTURE", panel: "SETUP", promoted: 2, ids: &["cam.setup", "cam.tool"] },
+    Section { tab: "MANUFACTURE", panel: "SETUP", promoted: 2, ids: &["cam.setup", "cam.tool", "cam.library"] },
     Section { tab: "MANUFACTURE", panel: "2D MILLING", promoted: 4, ids: &["cam.face", "cam.pocket", "cam.contour", "cam.drill"] },
     Section { tab: "MANUFACTURE", panel: "CHECK", promoted: 2, ids: &["cam.toolpaths", "cam.simulation"] },
     Section { tab: "MANUFACTURE", panel: "OUTPUT", promoted: 1, ids: &["cam.export"] },

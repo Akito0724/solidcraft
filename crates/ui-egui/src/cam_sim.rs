@@ -68,7 +68,13 @@ impl Sim {
                     .collect();
                 let radius = op["radius"].as_f64().unwrap_or(1.5);
                 let flutes = op["flute_length"].as_f64().unwrap_or(f64::INFINITY);
-                let cutter = if op["cutter"] == "drill" { Cutter::drill(radius, flutes) } else { Cutter::flat(radius, flutes) };
+                // The whole tool when the reply has it (its end's shape, shank and holder).
+                let cutter = match serde_json::from_value::<solidcraft_engine::machining::Tool>(op["tool_data"].clone()) {
+                    Ok(tool) if tool.problem().is_none() => Cutter::of(&tool),
+                    _ if op["cutter"] == "drill" => Cutter::drill(radius, flutes),
+                    _ if op["cutter"] == "ball" => Cutter::ball(radius, flutes),
+                    _ => Cutter::flat(radius, flutes),
+                };
                 RunOp { name: op["name"].as_str().unwrap_or_default().to_string(), cutter, points }
             })
             .filter(|op: &RunOp| op.points.len() > 1)
@@ -248,24 +254,30 @@ pub fn paint(sim: &mut Sim, painter: &egui::Painter, proj: &crate::viewport::Pro
     let Some(op) = sim.run.current() else { return };
     let c = op.cutter;
     let tip = sim.run.tip();
-    let ring = |z: f64| -> Vec<Pos2> {
+    let ring = |r: f64, z: f64| -> Vec<Pos2> {
         (0..24)
             .filter_map(|k| {
                 let a = f64::from(k) * std::f64::consts::TAU / 24.0;
-                proj.to_screen(sim.model(P3::new(tip.x + c.radius * a.cos(), tip.y + c.radius * a.sin(), tip.z + z)))
+                proj.to_screen(sim.model(P3::new(tip.x + r * a.cos(), tip.y + r * a.sin(), tip.z + z)))
             })
             .collect()
     };
     let point = c.point_length();
     let flutes = if c.flute_length.is_finite() { c.flute_length.max(point) } else { 20.0 };
-    let shank = hull([ring(flutes), ring(flutes + SHANK)].concat());
-    let mut cutting = [ring(point), ring(flutes)].concat();
+    // The shank up to the holder's face (or a length of it), then the holder.
+    let (face, held) = if c.holder_radius > 0.0 && c.stickout.is_finite() { (c.stickout.max(flutes), true) } else { (flutes + SHANK, false) };
+    let shank = hull([ring(c.shank_radius, flutes), ring(c.shank_radius, face)].concat());
+    let holder = if held { hull([ring(c.holder_radius, face), ring(c.holder_radius, face + 20.0)].concat()) } else { Vec::new() };
+    let mut cutting = [ring(c.radius, point), ring(c.radius, flutes)].concat();
     if point > 0.0
         && let Some(apex) = proj.to_screen(sim.model(tip))
     {
         cutting.push(apex);
     }
     let cutting = hull(cutting);
+    if holder.len() >= 3 {
+        painter.add(egui::Shape::convex_polygon(holder, t.text_dim.gamma_multiply(0.45), egui::Stroke::new(1.0, t.text_dim)));
+    }
     if shank.len() >= 3 {
         painter.add(egui::Shape::convex_polygon(shank, t.text_dim.gamma_multiply(0.8), egui::Stroke::new(1.0, t.text_dim)));
     }
@@ -290,6 +302,7 @@ pub fn crash_text(sim: &Sim, k: usize) -> Option<String> {
     let id = match e.crash {
         Crash::Rapid => "cam.sim.rapid_crash",
         Crash::Shank => "cam.sim.shank_crash",
+        Crash::Holder => "cam.sim.holder_crash",
     };
     let (x, y, z) = (format!("{:.1}", e.at.x), format!("{:.1}", e.at.y), format!("{:.1}", e.at.z));
     let text = solidcraft_ui_text::format(id, &[("x", &x), ("y", &y), ("z", &z)]);

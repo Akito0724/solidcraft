@@ -13,7 +13,14 @@
     "cmd.cam_drill": "Drilling",
     "cmd.cam_move": "Reorder Machining",
     "cmd.cam_simulation": "Simulate Machining",
-    "cmd.cam_preview": "Preview Machining"
+    "cmd.cam_preview": "Preview Machining",
+    "cmd.cam_library": "Tool Library",
+    "cmd.cam_library_tool": "Library Tool",
+    "cmd.cam_library_holder": "Library Holder",
+    "cmd.cam_library_delete": "Remove from Tool Library",
+    "cmd.cam_library_use": "Use Library Tool",
+    "cmd.cam_library_store": "Keep Tool in Library",
+    "cmd.cam_library_file": "Tool Library File"
   },
   "ja": {
     "cmd.cam_tool": "加工工具",
@@ -29,7 +36,14 @@
     "cmd.cam_drill": "穴あけ",
     "cmd.cam_move": "加工の順番を変更",
     "cmd.cam_simulation": "加工シミュレーション",
-    "cmd.cam_preview": "加工プレビュー"
+    "cmd.cam_preview": "加工プレビュー",
+    "cmd.cam_library": "工具ライブラリ",
+    "cmd.cam_library_tool": "ライブラリの工具",
+    "cmd.cam_library_holder": "ライブラリのホルダー",
+    "cmd.cam_library_delete": "工具ライブラリから削除",
+    "cmd.cam_library_use": "ライブラリの工具を使う",
+    "cmd.cam_library_store": "工具をライブラリに保存",
+    "cmd.cam_library_file": "工具ライブラリのファイル"
   },
   "zh": {
     "cmd.cam_tool": "加工刀具",
@@ -45,7 +59,14 @@
     "cmd.cam_drill": "钻孔",
     "cmd.cam_move": "调整加工顺序",
     "cmd.cam_simulation": "加工模拟",
-    "cmd.cam_preview": "加工预览"
+    "cmd.cam_preview": "加工预览",
+    "cmd.cam_library": "刀具库",
+    "cmd.cam_library_tool": "库刀具",
+    "cmd.cam_library_holder": "库刀柄",
+    "cmd.cam_library_delete": "从刀具库删除",
+    "cmd.cam_library_use": "使用库刀具",
+    "cmd.cam_library_store": "将刀具存入库",
+    "cmd.cam_library_file": "刀具库文件"
   },
   "vi": {
     "cmd.cam_tool": "Dao gia công",
@@ -61,7 +82,14 @@
     "cmd.cam_drill": "Khoan",
     "cmd.cam_move": "Sắp xếp nguyên công",
     "cmd.cam_simulation": "Mô phỏng gia công",
-    "cmd.cam_preview": "Xem trước gia công"
+    "cmd.cam_preview": "Xem trước gia công",
+    "cmd.cam_library": "Thư viện dao",
+    "cmd.cam_library_tool": "Dao trong thư viện",
+    "cmd.cam_library_holder": "Đầu kẹp trong thư viện",
+    "cmd.cam_library_delete": "Xóa khỏi thư viện dao",
+    "cmd.cam_library_use": "Dùng dao từ thư viện",
+    "cmd.cam_library_store": "Lưu dao vào thư viện",
+    "cmd.cam_library_file": "Tệp thư viện dao"
   },
   "ar": {
     "cmd.cam_tool": "أداة التشغيل",
@@ -77,7 +105,14 @@
     "cmd.cam_drill": "ثقب",
     "cmd.cam_move": "إعادة ترتيب التشغيل",
     "cmd.cam_simulation": "محاكاة التشغيل",
-    "cmd.cam_preview": "معاينة التشغيل"
+    "cmd.cam_preview": "معاينة التشغيل",
+    "cmd.cam_library": "مكتبة الأدوات",
+    "cmd.cam_library_tool": "أداة المكتبة",
+    "cmd.cam_library_holder": "حامل المكتبة",
+    "cmd.cam_library_delete": "إزالة من مكتبة الأدوات",
+    "cmd.cam_library_use": "استخدام أداة من المكتبة",
+    "cmd.cam_library_store": "حفظ الأداة في المكتبة",
+    "cmd.cam_library_file": "ملف مكتبة الأدوات"
   },
   "he": {
     "cmd.cam_tool": "כלי עיבוד",
@@ -93,6 +128,13 @@
     "cmd.cam_drill": "קידוח",
     "cmd.cam_move": "סידור פעולות עיבוד",
     "cmd.cam_simulation": "הדמיית עיבוד",
-    "cmd.cam_preview": "תצוגה מקדימה של עיבוד"
+    "cmd.cam_preview": "תצוגה מקדימה של עיבוד",
+    "cmd.cam_library": "ספריית כלים",
+    "cmd.cam_library_tool": "כלי בספרייה",
+    "cmd.cam_library_holder": "מחזיק בספרייה",
+    "cmd.cam_library_delete": "הסרה מספריית הכלים",
+    "cmd.cam_library_use": "שימוש בכלי מהספרייה",
+    "cmd.cam_library_store": "שמירת הכלי בספרייה",
+    "cmd.cam_library_file": "קובץ ספריית כלים"
   }
 }

@@ -20,6 +20,7 @@ pub mod browser_canvas;
 pub mod browser_prompts;
 pub mod cam_panel;
 pub mod cam_sim;
+pub mod cam_tools;
 pub mod canvas;
 pub mod cli_link;
 #[cfg(test)]

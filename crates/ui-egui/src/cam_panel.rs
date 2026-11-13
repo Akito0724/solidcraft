@@ -50,8 +50,6 @@ const ORIGIN_LABELS: [&str; 11] = [
 const STOCK_MODES: [&str; 2] = ["Margins", "Fixed size"];
 const PLACES: [&str; 5] = ["center", "front_left", "front_right", "back_left", "back_right"];
 const PLACE_LABELS: [&str; 5] = ["Center", "Front left", "Front right", "Back left", "Back right"];
-const TOOL_KINDS: [&str; 2] = ["flat_endmill", "drill"];
-const TOOL_KIND_LABELS: [&str; 2] = ["Flat end mill", "Drill"];
 
 /// The window's state; the lists come from the engine.
 pub struct CamPanel {
@@ -61,10 +59,12 @@ pub struct CamPanel {
     pub setup: Option<u64>,
     // The tool form.
     pub tool_number: String,
-    pub tool_diameter: String,
-    pub tool_kind: usize,
-    /// Empty: four times the diameter.
-    pub tool_flute: String,
+    /// The tool dialog's tool.
+    pub tool_form: crate::cam_tools::ToolForm,
+    /// The shared tool library and its window.
+    pub library: crate::cam_tools::Library,
+    /// The tool dialog's tool's library entry and its own revision.
+    tool_link: Option<(String, String)>,
     // The setup form.
     pub material: usize,
     /// The face on the table, as picked.
@@ -198,9 +198,9 @@ impl Default for CamPanel {
             cache: None,
             setup: None,
             tool_number: "1".into(),
-            tool_diameter: "3.175".into(),
-            tool_kind: 0,
-            tool_flute: String::new(),
+            tool_form: crate::cam_tools::ToolForm::default(),
+            library: crate::cam_tools::Library::default(),
+            tool_link: None,
             material: 0,
             table: TablePick::Bottom,
             x_axis: None,
@@ -282,6 +282,13 @@ enum Action {
     /// To the start of the operation before or after the one playing.
     Chapter(i32),
     StopSimulation,
+    /// The shared tool library's window, and what it asks for.
+    OpenLibrary,
+    Library(crate::cam_tools::Do),
+    /// Copy a library tool into the design and pick it for the operation.
+    UseLibraryTool(String),
+    /// Put the design's tool of this number into the library.
+    StoreTool(u64),
 }
 
 /// A number typed in a field: `None` when it is empty or not a finite number.
@@ -407,12 +414,8 @@ impl CamPanel {
 
     fn tool_params(&self) -> Result<Value, String> {
         let n = self.tool_number.trim().parse::<u32>().map_err(|_| tr("cam.panel.bad_tool_number").to_string())?;
-        let d = number(&self.tool_diameter).ok_or_else(|| tr("cam.panel.bad_diameter").to_string())?;
-        let kind = TOOL_KINDS.get(self.tool_kind).copied().unwrap_or("flat_endmill");
-        let mut p = json!({"number": n, "diameter": d, "kind": kind});
-        if !self.tool_flute.trim().is_empty() {
-            p["flute_length"] = json!(number(&self.tool_flute).ok_or_else(|| tr("cam.panel.bad_flute").to_string())?);
-        }
+        let mut p = self.tool_form.params()?;
+        p["number"] = json!(n);
         Ok(p)
     }
 
@@ -852,8 +855,14 @@ fn setup_name(name: &str) -> String {
 
 /// A tool's generated name (`3.175 mm 2-flute end mill`, `3 mm drill`) in the interface
 /// language; others as they are.
-fn tool_name(name: &str) -> String {
-    for (pattern, id) in [("{d} mm {f}-flute end mill", "cam.tool_name.endmill"), ("{d} mm drill", "cam.tool_name.drill")] {
+pub(crate) fn tool_name(name: &str) -> String {
+    for (pattern, id) in [
+        ("{d} mm {f}-flute ball end mill", "cam.tool_name.ball"),
+        ("{d} mm {f}-flute end mill", "cam.tool_name.endmill"),
+        ("{d} mm R{r} bull nose", "cam.tool_name.bull"),
+        ("{d} mm drill", "cam.tool_name.drill"),
+        ("{a}° V-bit", "cam.tool_name.vbit"),
+    ] {
         if let Some(args) = fill(pattern, name) {
             let args: Vec<(&str, &str)> = args.iter().map(|(k, v)| (*k, v.as_str())).collect();
             return solidcraft_ui_text::format(id, &args);
@@ -957,7 +966,7 @@ fn fill<'p>(pattern: &'p str, text: &str) -> Option<Vec<(&'p str, String)>> {
 /// A machining message from the engine in the interface language: the command's
 /// `invalid parameters for …:` dropped, names translated, known wordings translated; anything
 /// else as it came.
-fn cam_text(error: &str) -> String {
+pub(crate) fn cam_text(error: &str) -> String {
     let text = error.strip_prefix("invalid parameters for `").and_then(|rest| rest.split_once("`: ")).map_or(error, |(_, text)| text);
     translate(text)
 }
@@ -1039,6 +1048,7 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
             | "cam.generate"
             | "cam.setup"
             | "cam.tool"
+            | "cam.library"
             | "cam.toolpaths"
             | "cam.export"
             | "cam.operation"
@@ -1061,6 +1071,7 @@ pub fn start(app: &mut SolveApp, id: &str) -> bool {
         "cam.drill" => Some(Action::OpenOperation(3)),
         "cam.setup" => Some(Action::OpenSetup(None)),
         "cam.tool" => Some(Action::OpenTool(None)),
+        "cam.library" => Some(Action::OpenLibrary),
         "cam.simulation" => Some(Action::Simulate),
         "cam.export" => Some(Action::Export),
         "cam.toolpaths" => {
@@ -1305,6 +1316,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         d.setup_preview = None;
     }
     let mut action = None;
+    // The library's tools are offered in the dialogs: read it once.
+    if (d.dialog.is_some() || d.library.open) && d.library.data.is_none() {
+        d.library.refresh(app);
+    }
     if let Some(dialog) = d.dialog {
         action = dialog_card(app, ctx, &mut d, dialog, &tools, &selection);
     }
@@ -1313,6 +1328,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     if d.sim.is_some() {
         player(ctx, &mut d, &mut action);
+    }
+    if d.library.open
+        && let Some(what) = crate::cam_tools::window(ctx, &mut d.library)
+    {
+        action = Some(Action::Library(what));
     }
     if let Some(a) = action {
         run(app, &mut d, a, &tools, &selection);
@@ -1404,16 +1424,29 @@ fn operation_body(ui: &mut egui::Ui, d: &mut CamPanel, kind: &str, tools: &[Valu
     let used = d.preview.as_ref().map(|p| p.cutting.clone()).unwrap_or(Value::Null);
     match d.tab {
         0 => {
-            if tools.is_empty() {
+            // The design's tools, then the library's not yet in it: picking one copies it in.
+            let library: Vec<Value> = d.library.tools().into_iter().filter(|e| !tools.iter().any(|t| t["library"] == e["id"])).collect();
+            if tools.is_empty() && library.is_empty() {
                 ui.label(RichText::new(tr("cam.panel.add_a_tool")).color(t.text_dim));
-            } else {
-                let labels: Vec<String> =
-                    tools.iter().map(|tool| format!("T{} {}", text(&tool["number"]), tool_name(&text(&tool["name"])))).collect();
-                let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-                if d.tool >= refs.len() {
-                    d.tool = 0;
+            }
+            if d.tool >= tools.len() {
+                d.tool = 0;
+            }
+            for (i, tool) in tools.iter().enumerate() {
+                let differs = tool["library"].as_str().and_then(|id| d.library.revision(id)).is_some_and(|rev| rev != text(&tool["revision"]));
+                let note = if differs { tr_label("differs from the library") } else { "" };
+                if crate::cam_tools::tool_row(ui, ui.make_persistent_id(("cam_op_tool", i)), tool, i == d.tool, true, note) {
+                    d.tool = i;
                 }
-                crate::ui_kit::row(ui, "Tool", |ui| crate::ui_kit::dropdown(ui, "cam_op_tool", &mut d.tool, &refs));
+            }
+            if !library.is_empty() {
+                ui.label(RichText::new(tr_label("From the library")).small().strong().color(t.text_dim));
+                for e in &library {
+                    let id = text(&e["id"]);
+                    if crate::cam_tools::tool_row(ui, ui.make_persistent_id(("cam_op_lib", &id)), &e["tool"], false, false, "") {
+                        d.pending = Some(Action::UseLibraryTool(id));
+                    }
+                }
             }
             field(ui, "Spindle (rpm)", &mut d.rpm, &hint(&used["spindle_rpm"], 1.0));
             field(ui, "Feed (mm/min)", &mut d.feed, &hint(&used["feed"], 1.0));
@@ -1562,14 +1595,37 @@ fn setup_body(ui: &mut egui::Ui, d: &mut CamPanel) {
 
 fn tool_body(ui: &mut egui::Ui, d: &mut CamPanel) {
     field(ui, "Number", &mut d.tool_number, "1");
-    crate::ui_kit::row(ui, "Type", |ui| crate::ui_kit::dropdown(ui, "cam_tool_kind", &mut d.tool_kind, &TOOL_KIND_LABELS));
-    field(ui, "Diameter", &mut d.tool_diameter, "3.175");
-    field(ui, "Flute length", &mut d.tool_flute, tr_label("4 × diameter"));
+    let holders = d.library.holders();
+    // Copied from the library: whether the two still agree.
+    if let Some((id, mine)) = d.tool_link.clone() {
+        let t = Tokens::get();
+        match d.library.revision(&id) {
+            Some(rev) if rev == mine => {
+                ui.label(RichText::new(tr("cam.lib.same")).small().color(t.agent_ok));
+            }
+            Some(_) => {
+                ui.label(RichText::new(tr("cam.lib.differs")).small().color(t.warning));
+                if crate::ui_kit::button(ui, tr_label("Update from Library"), crate::ui_kit::Button::Small).clicked() {
+                    d.pending = Some(Action::UseLibraryTool(id));
+                }
+            }
+            None => {
+                ui.label(RichText::new(tr("cam.lib.missing")).small().color(t.text_dim));
+            }
+        }
+    }
+    crate::cam_tools::form(ui, &mut d.tool_form, &holders);
     if let Ok(n) = d.tool_number.trim().parse::<u32>()
         && d.tool_known
-        && crate::ui_kit::button(ui, tr_label("Delete"), crate::ui_kit::Button::Normal).clicked()
     {
-        d.pending = Some(Action::DeleteTool(n));
+        ui.horizontal(|ui| {
+            if crate::ui_kit::button(ui, tr_label("Keep in Library"), crate::ui_kit::Button::Normal).clicked() {
+                d.pending = Some(Action::StoreTool(u64::from(n)));
+            }
+            if crate::ui_kit::button(ui, tr_label("Delete"), crate::ui_kit::Button::Normal).clicked() {
+                d.pending = Some(Action::DeleteTool(n));
+            }
+        });
     }
 }
 
@@ -1725,16 +1781,14 @@ fn run(app: &mut SolveApp, d: &mut CamPanel, action: Action, tools: &[Value], se
             match &tool {
                 Some(t) => {
                     d.tool_number = text(&t["number"]);
-                    d.tool_diameter = num(&t["diameter"]);
-                    d.tool_flute = num(&t["flute_length"]);
-                    d.tool_kind = TOOL_KINDS.iter().position(|k| *k == text(&t["kind"])).unwrap_or(0);
+                    d.tool_form = crate::cam_tools::ToolForm::from_info(t);
+                    d.tool_link = t["library"].as_str().map(|id| (id.to_string(), text(&t["revision"])));
                 }
                 None => {
                     let next = tools.iter().filter_map(|t| t["number"].as_u64()).max().unwrap_or(0) + 1;
                     d.tool_number = next.to_string();
-                    d.tool_diameter = "3.175".into();
-                    d.tool_flute.clear();
-                    d.tool_kind = 0;
+                    d.tool_form = crate::cam_tools::ToolForm::default();
+                    d.tool_link = None;
                 }
             }
             d.tool_known = tool.is_some();
@@ -1838,6 +1892,29 @@ fn run(app: &mut SolveApp, d: &mut CamPanel, action: Action, tools: &[Value], se
             d.sim = None;
             Ok(Value::Null)
         }
+        Action::OpenLibrary => {
+            d.library.open = true;
+            d.library.refresh(app);
+            Ok(Value::Null)
+        }
+        Action::Library(what) => {
+            d.library.act(app, what);
+            Ok(Value::Null)
+        }
+        Action::UseLibraryTool(id) => d.library.use_tool(app, &id).map(|v| {
+            // The operation takes the tool just copied in.
+            let number = v["tools"].as_array().into_iter().flatten().find(|t| t["library"] == id.as_str()).and_then(|t| t["number"].as_u64());
+            if let Some(n) = number {
+                let mut numbers: Vec<u64> = v["tools"].as_array().into_iter().flatten().filter_map(|t| t["number"].as_u64()).collect();
+                numbers.sort_unstable();
+                d.tool = numbers.iter().position(|x| *x == n).unwrap_or(d.tool);
+            }
+            v
+        }),
+        Action::StoreTool(n) => d.library.store(app, n).map(|v| {
+            d.notice = Some(tr("cam.lib.stored").to_string());
+            v
+        }),
         Action::Export => {
             let Some(setup) = d.setup else {
                 app.set_status(tr("cam.panel.no_setup").to_string(), true);
@@ -2002,7 +2079,11 @@ mod tests {
         let mut h = boxed();
         h.step(&json!({"start": "cam.tool"})).unwrap();
         assert_eq!(h.app.machining.as_ref().and_then(|d| d.dialog), Some(CamDialog::Tool));
-        h.app.machining.as_mut().unwrap().tool_flute = "20".into();
+        {
+            let f = &mut h.app.machining.as_mut().unwrap().tool_form;
+            f.diameter = "3".into();
+            f.flute_length = "20".into();
+        }
         ok(&mut h);
         h.step(&json!({"start": "cam.setup"})).unwrap();
         ok(&mut h);
@@ -2081,6 +2162,74 @@ mod tests {
         assert_eq!(d.table, super::TablePick::Keep);
         assert_eq!(d.stock_mode, 1);
         h.app.machining = Some(d);
+    }
+
+    #[test]
+    fn the_tool_library_keeps_tools_for_every_design_and_a_design_takes_a_copy() {
+        use crate::cam_tools::{Do, Picked};
+        let dir = std::env::temp_dir().join(format!("solidcraft-ui-tool-library-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("tools.json").display().to_string();
+        let mut h = boxed();
+        crate::cam_panel::open(&mut h.app);
+        h.app.machining.as_mut().unwrap().library.path = Some(path.clone());
+        h.step(&json!({"start": "cam.library"})).unwrap();
+        h.frames(2);
+        assert!(h.app.machining.as_ref().unwrap().library.open, "the window opens");
+        assert!(h.app.machining.as_ref().unwrap().library.tools().is_empty(), "a new library is empty");
+        // A 6 mm ball end mill in an ER11 holder.
+        let mut d = h.app.machining.take().unwrap();
+        d.library.act(&mut h.app, Do::Pick(Picked::NewTool));
+        d.library.form.kind = 1;
+        d.library.form.diameter = "6".into();
+        d.library.form.flute_length = "18".into();
+        d.library.form.holder = true;
+        d.library.form.holder_name = "ER11".into();
+        d.library.form.sections = vec![["16".into(), "12".into()], ["22".into(), "25".into()]];
+        d.library.form.stickout = "25".into();
+        d.library.act(&mut h.app, Do::Save);
+        assert!(d.library.error.is_none(), "{:?}", d.library.error);
+        let tools = d.library.tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["tool"]["kind"], "ball_endmill");
+        assert_eq!(tools[0]["tool"]["holder"]["sections"][1][0], 22.0);
+        let id = tools[0]["id"].as_str().unwrap().to_string();
+        assert_eq!(d.library.picked, Some(Picked::Tool(id.clone())));
+        // A holder of its own.
+        d.library.act(&mut h.app, Do::Pick(Picked::NewHolder));
+        d.library.holder_name = "ER16".into();
+        d.library.holder_sections = vec![["22".into(), "30".into()]];
+        d.library.act(&mut h.app, Do::Save);
+        assert_eq!(d.library.holders().len(), 1);
+        h.app.machining = Some(d);
+        h.frames(2);
+        // The operation dialog offers it from the library; picking it copies it in.
+        h.app.run("cam.setup", json!({})).unwrap();
+        h.step(&json!({"start": "cam.contour"})).unwrap();
+        h.frames(2);
+        let mut d = h.app.machining.take().unwrap();
+        run(&mut h.app, &mut d, Action::UseLibraryTool(id.clone()), &[], &[]);
+        h.app.machining = Some(d);
+        let cam = generated(&mut h);
+        assert_eq!(cam["tools"][0]["library"], id.as_str(), "{cam}");
+        assert_eq!(cam["tools"][0]["kind"], "ball_endmill");
+        // The tool dialog says the copy and the library agree, and keeps the shape.
+        let tool = cam["tools"][0].clone();
+        let mut d = h.app.machining.take().unwrap();
+        run(&mut h.app, &mut d, Action::OpenTool(Some(tool)), &[], &[]);
+        assert_eq!(d.tool_form.kind, 1);
+        assert_eq!(d.tool_form.sections.len(), 2);
+        assert_eq!(d.tool_link.as_ref().map(|l| l.0.clone()), Some(id.clone()));
+        h.app.machining = Some(d);
+        h.frames(2);
+        // A new design reads the same library.
+        let mut other = boxed();
+        crate::cam_panel::open(&mut other.app);
+        other.app.machining.as_mut().unwrap().library.path = Some(path);
+        let mut d = other.app.machining.take().unwrap();
+        d.library.refresh(&mut other.app);
+        assert_eq!(d.library.tools().len(), 1);
+        other.app.machining = Some(d);
     }
 
     #[test]

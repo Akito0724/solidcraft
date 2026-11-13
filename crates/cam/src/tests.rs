@@ -136,7 +136,15 @@ fn depths_tools_and_clearance_are_checked() {
 
 #[test]
 fn drilling_pecks_and_clears_between_holes() {
-    let drill = Tool { number: 3, name: "3 mm drill".into(), kind: ToolKind::Drill, diameter: 3.0, flute_length: 20.0, flutes: 2 };
+    let drill = Tool {
+        details: Default::default(),
+        number: 3,
+        name: "3 mm drill".into(),
+        kind: ToolKind::Drill,
+        diameter: 3.0,
+        flute_length: 20.0,
+        flutes: 2,
+    };
     let op = DrillOp { points: vec![(10.0, 0.0), (0.0, 0.0), (5.0, 5.0)], depths: Depths { top: 0.0, bottom: -6.0 }, peck: Some(2.0) };
     let t = generate(&job("holes", Operation::Drill(op), drill.clone()), &Clearance::default()).unwrap();
     let plunges = t.moves.iter().filter(|m| matches!(m, Move::Feed { to, .. } if to.z < -1e-9)).count();
@@ -470,4 +478,63 @@ fn the_stock_is_compared_with_the_part_and_drawn_as_merged_quads() {
         .map(|q| (q.corners[2].x - q.corners[0].x).abs() * (q.corners[2].y - q.corners[0].y).abs())
         .sum();
     assert!((area - 100.0).abs() < 1e-9, "the tops cover the block once: {area}");
+}
+
+#[test]
+fn a_tool_keeps_its_shape_holder_and_cutting_data_per_material() {
+    use crate::sim::{Crash, Cutter, Run, RunOp, Stock};
+    use crate::tool::{Holder, HolderSection, Preset};
+    let mut t = Tool::endmill(1, 6.0, 2, 15.0);
+    assert!(t.problem().is_none());
+    // Its own data for wood over the starting values; acrylic keeps the starting values.
+    t.details.presets.push(Preset {
+        material: Material::Wood,
+        spindle_rpm: Some(12_000.0),
+        feed: Some(900.0),
+        plunge_feed: None,
+        stepdown: None,
+        stepover: None,
+    });
+    let wood = t.cutting(Material::Wood);
+    assert_eq!((wood.spindle_rpm, wood.feed), (12_000.0, 900.0));
+    assert_eq!(wood.stepdown, Cutting::starting(Material::Wood, &t).stepdown);
+    assert_eq!(t.cutting(Material::Acrylic), Cutting::starting(Material::Acrylic, &t));
+    // A bull nose needs its corner; a V-bit its tip narrower than itself; a holder its sections.
+    let mut bull = t.clone();
+    bull.kind = ToolKind::BullNose;
+    assert!(bull.problem().is_some());
+    bull.details.corner_radius = Some(1.0);
+    assert!(bull.problem().is_none());
+    let mut v = t.clone();
+    v.kind = ToolKind::VBit;
+    v.details.tip_diameter = Some(6.0);
+    assert!(v.problem().is_some());
+    let mut held = t.clone();
+    held.details.holder = Some(Holder { name: "ER11".into(), sections: vec![] });
+    assert!(held.problem().is_some());
+    held.details.holder = Some(Holder { name: "ER11".into(), sections: vec![HolderSection { diameter: 19.0, length: 20.0 }] });
+    held.details.stickout = Some(18.0);
+    assert!(held.problem().is_none());
+    // The cutters they cut as.
+    assert_eq!(Cutter::of(&t).point_length(), 0.0);
+    let ball = {
+        let mut b = t.clone();
+        b.kind = ToolKind::BallEndmill;
+        Cutter::of(&b)
+    };
+    assert!((ball.point_length() - 3.0).abs() < 1e-9);
+    let bull = Cutter::of(&bull);
+    assert_eq!(bull.lift(1.5), Some(0.0), "flat inside the corners");
+    assert!((bull.point_length() - 1.0).abs() < 1e-9);
+    let cut = Cutter::of(&held);
+    assert_eq!((cut.stickout, cut.holder_radius), (18.0, 9.5));
+    // A cut 20 mm deep with 18 mm out of the holder: the holder meets the stock's top.
+    let stock = Stock::new([-30.0, -30.0, -25.0], [30.0, 30.0, 0.0], 0.5).unwrap();
+    let p = |x: f64, z: f64| P3::new(x, 0.0, z);
+    let mut deep = cut;
+    deep.flute_length = 30.0;
+    let op = RunOp { name: "deep".into(), cutter: deep, points: vec![(p(-10.0, 5.0), true), (p(-10.0, -20.0), false), (p(10.0, -20.0), false)] };
+    let mut run = Run::new(stock, vec![op]);
+    run.advance(f64::INFINITY, false);
+    assert!(run.events.iter().any(|e| e.crash == Crash::Holder), "{:?}", run.events);
 }

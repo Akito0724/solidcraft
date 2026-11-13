@@ -214,6 +214,9 @@ pub fn check(job: &Job, clearance: &Clearance) -> Result<()> {
     if job.tool.kind == ToolKind::Drill && !matches!(job.operation, Operation::Drill(_)) {
         return Err(invalid(format!("{}: a drill can only drill", job.name)));
     }
+    if job.tool.kind == ToolKind::VBit {
+        return Err(invalid(format!("{}: a V-bit is for chamfers and engraving, which can't be made here yet", job.name)));
+    }
     Ok(())
 }
 

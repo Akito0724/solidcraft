@@ -30,29 +30,59 @@ pub enum Shape {
     Ball,
     /// A cone, as a drill's point: `tan` is the tangent of its half angle.
     Cone { tan: f64 },
+    /// A flat end with corners rounded to `corner` (a bull nose).
+    Bull { corner: f64 },
 }
 
-/// A cutter as a playback sees it: its radius, its end's shape and how far up its flutes reach.
-/// Above the flutes is the shank, as wide as the cutter.
+/// A cutter as a playback sees it: its radius, its end's shape and how far up its flutes reach;
+/// above the flutes its shank, and `stickout` above its tip the holder's face, the holder as wide
+/// as `holder_radius` (0: no holder is checked).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cutter {
     pub radius: f64,
     pub shape: Shape,
     pub flute_length: f64,
+    pub shank_radius: f64,
+    pub stickout: f64,
+    pub holder_radius: f64,
 }
 
 impl Cutter {
+    fn with(radius: f64, shape: Shape, flute_length: f64) -> Cutter {
+        Cutter { radius, shape, flute_length, shank_radius: radius, stickout: f64::INFINITY, holder_radius: 0.0 }
+    }
+
     pub fn flat(radius: f64, flute_length: f64) -> Cutter {
-        Cutter { radius, shape: Shape::Flat, flute_length }
+        Cutter::with(radius, Shape::Flat, flute_length)
     }
 
     /// A twist drill: a 118° point.
     pub fn drill(radius: f64, flute_length: f64) -> Cutter {
-        Cutter { radius, shape: Shape::Cone { tan: 59f64.to_radians().tan() }, flute_length }
+        Cutter::with(radius, Shape::Cone { tan: 59f64.to_radians().tan() }, flute_length)
     }
 
     pub fn ball(radius: f64, flute_length: f64) -> Cutter {
-        Cutter { radius, shape: Shape::Ball, flute_length }
+        Cutter::with(radius, Shape::Ball, flute_length)
+    }
+
+    /// The cutter a tool cuts as: its end's shape from its kind and details, its shank, and its
+    /// holder (as wide as its widest section).
+    pub fn of(tool: &crate::tool::Tool) -> Cutter {
+        use crate::tool::ToolKind;
+        let (r, flutes) = (tool.radius(), tool.flute_length);
+        let shape = match tool.kind {
+            ToolKind::FlatEndmill => Shape::Flat,
+            ToolKind::BallEndmill => Shape::Ball,
+            ToolKind::BullNose => Shape::Bull { corner: tool.details.corner_radius.unwrap_or(0.0) },
+            ToolKind::Drill | ToolKind::VBit => Shape::Cone { tan: (tool.tip_angle() / 2.0).to_radians().tan() },
+        };
+        let mut c = Cutter::with(r, shape, flutes);
+        c.shank_radius = tool.shank() / 2.0;
+        if let Some(h) = &tool.details.holder {
+            c.stickout = tool.stickout();
+            c.holder_radius = h.sections.iter().map(|s| s.diameter / 2.0).fold(0.0, f64::max);
+        }
+        c
     }
 
     /// How far above its tip the cutter's end is at `d` from its axis; `None` beyond its radius.
@@ -66,6 +96,11 @@ impl Cutter {
             Shape::Ball => self.radius - (self.radius * self.radius - d * d).max(0.0).sqrt(),
             Shape::Cone { tan } if tan > 1e-9 => d / tan,
             Shape::Cone { .. } => 0.0,
+            Shape::Bull { corner } => {
+                let c = corner.clamp(0.0, self.radius);
+                let from = self.radius - c;
+                if d <= from { 0.0 } else { c - (c * c - (d - from) * (d - from)).max(0.0).sqrt() }
+            }
         })
     }
 
@@ -267,7 +302,18 @@ impl Stock {
     /// Where a cutting move from `a` to `b` meets material above the flutes (the shank rubs).
     pub fn shank_hit(&self, a: P3, b: P3, cutter: &Cutter) -> Option<P3> {
         let flutes = cutter.flute_length.max(cutter.point_length());
-        self.first_touch(a, b, cutter, |_| flutes)
+        let shank = Cutter::flat(cutter.shank_radius.max(cutter.radius), cutter.flute_length);
+        self.first_touch(a, b, &shank, |_| flutes)
+    }
+
+    /// Where a move from `a` to `b` runs the holder into material.
+    pub fn holder_hit(&self, a: P3, b: P3, cutter: &Cutter) -> Option<P3> {
+        if !(cutter.holder_radius > 0.0 && cutter.stickout.is_finite()) {
+            return None;
+        }
+        let holder = Cutter::flat(cutter.holder_radius, cutter.flute_length);
+        let face = cutter.stickout;
+        self.first_touch(a, b, &holder, |_| face)
     }
 
     /// The material removed so far (mm³).
@@ -512,10 +558,7 @@ impl RunOp {
     /// tool's size.
     pub fn new(name: String, path: &Toolpath, step: f64) -> RunOp {
         let r = path.tool.diameter / 2.0;
-        let cutter = match path.tool.kind {
-            crate::tool::ToolKind::Drill => Cutter::drill(r, path.tool.flute_length),
-            crate::tool::ToolKind::FlatEndmill => Cutter::flat(r, path.tool.flute_length),
-        };
+        let cutter = Cutter::of(&path.tool);
         RunOp { name, cutter, points: path.points(step) }
     }
 }
@@ -527,6 +570,8 @@ pub enum Crash {
     Rapid,
     /// Material stands above the flutes while cutting: the shank rubs.
     Shank,
+    /// The holder runs into material.
+    Holder,
 }
 
 /// Where a playback found a crash: the operation, its moves `first..=last` (indices of the
@@ -652,7 +697,8 @@ impl Run {
                 self.stock.rapid_hit(self.tip, reach, &cutter).map(|p| (Crash::Rapid, p))
             } else {
                 self.stock.shank_hit(self.tip, reach, &cutter).map(|p| (Crash::Shank, p))
-            };
+            }
+            .or_else(|| self.stock.holder_hit(self.tip, reach, &cutter).map(|p| (Crash::Holder, p)));
             let new = hit.is_some_and(|(crash, at)| self.note(crash, at));
             // A rapid that crashes cuts too: the material is gone after it.
             if !rapid || hit.is_some() {

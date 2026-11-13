@@ -30,7 +30,7 @@ pub use ops::{Approach, Clearance, ContourOp, Depths, DrillOp, Entry, FaceOp, Fi
 pub use post::{PostOptions, by_tool, grbl};
 pub use setup::{Frame, cross};
 pub use sim::{Crash, Cutter, Event, Quad, Run, RunOp, Shade, Stock, surface};
-pub use tool::{Cutting, Material, Tool, ToolKind};
+pub use tool::{Cutting, Holder, HolderSection, LibraryLink, Material, Preset, Tool, ToolDetails, ToolKind};
 pub use toolpath::{Move, P3, Toolpath};
 
 /// Why a toolpath could not be made.

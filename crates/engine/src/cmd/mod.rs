@@ -24,6 +24,7 @@ mod bom;
 pub(crate) mod browser;
 mod cam;
 mod cam_kit;
+mod cam_library;
 pub(crate) mod clearance;
 mod clipboard;
 mod clipboard_foreign;
@@ -367,6 +368,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(script::COMMANDS.iter());
     v.extend(parameters::COMMANDS.iter());
     v.extend(cam::COMMANDS.iter());
+    v.extend(cam_library::COMMANDS.iter());
     v.extend(parameter_sweep::COMMANDS.iter());
     v.extend(file::COMMANDS.iter());
     v.extend(print_face::COMMANDS.iter());

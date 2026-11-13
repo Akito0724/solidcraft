@@ -80,9 +80,19 @@ fn entry(e: Entry, r: f64) -> kit::Entry {
 }
 
 fn tool(job: &Job) -> kit::Tool {
-    let mut t = kit::Tool::new(job.tool.number, kit::ToolKind::FlatEndmill, job.tool.diameter, job.tool.flute_length);
-    t.flutes = job.tool.flutes.max(1);
-    t
+    let t = &job.tool;
+    let kind = match t.kind {
+        solidcraft_cam::ToolKind::BallEndmill => kit::ToolKind::BallEndmill,
+        solidcraft_cam::ToolKind::BullNose => kit::ToolKind::BullNose,
+        _ => kit::ToolKind::FlatEndmill,
+    };
+    let mut k = kit::Tool::new(t.number, kind, t.diameter, t.flute_length);
+    k.flutes = t.flutes.max(1);
+    if kind == kit::ToolKind::BullNose {
+        k.corner_radius = t.details.corner_radius;
+    }
+    k.shank_diameter = t.details.shank_diameter;
+    k
 }
 
 fn cut(job: &Job, clearance: &Clearance, top: f64, bottom: f64) -> kit::Cut {

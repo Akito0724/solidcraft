@@ -335,7 +335,7 @@ impl Document {
 
     fn cam_job(&self, st: &ModelState, setup: &CamSetup, plan: &CamPlan, op: &CamOperation) -> Result<Job> {
         let tool = self.cam.tool(op.tool).ok_or_else(|| DocError::Invalid(format!("there is no tool T{} in the library", op.tool)))?.clone();
-        let cutting = op.cutting.unwrap_or_else(|| Cutting::starting(setup.material, &tool));
+        let cutting = op.cutting.unwrap_or_else(|| tool.cutting(setup.material));
         let frame = &plan.frame;
         let body = st.body(&setup.body).ok_or_else(|| DocError::Invalid(format!("there is no body `{}`", setup.body)))?;
         let top = plan.stock_max[2];

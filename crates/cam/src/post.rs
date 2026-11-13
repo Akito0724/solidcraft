@@ -97,6 +97,9 @@ fn kind_name(k: ToolKind) -> &'static str {
     match k {
         ToolKind::FlatEndmill => "flat end mill",
         ToolKind::Drill => "drill",
+        ToolKind::BallEndmill => "ball end mill",
+        ToolKind::BullNose => "bull nose end mill",
+        ToolKind::VBit => "V-bit",
     }
 }
 

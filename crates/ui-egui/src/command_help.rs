@@ -15,6 +15,7 @@ pub const DOCUMENTED: &[&str] = &[
     "cam.export",
     "cam.face",
     "cam.generate",
+    "cam.library",
     "cam.pocket",
     "cam.setup",
     "cam.simulation",
