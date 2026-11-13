@@ -1364,7 +1364,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         player(ctx, &mut d, &mut action);
     }
     if d.library.open
-        && let Some(what) = crate::cam_tools::window(ctx, &mut d.library)
+        && let Some(what) = crate::cam_tools::window(ctx, &mut d.library, &tools)
     {
         action = Some(Action::Library(what));
     }
@@ -1953,7 +1953,7 @@ fn run(app: &mut SolveApp, d: &mut CamPanel, action: Action, tools: &[Value], se
             Ok(Value::Null)
         }
         Action::Library(what) => {
-            d.library.act(app, what);
+            d.library.act(app, tools, what);
             Ok(Value::Null)
         }
         Action::UseLibraryTool(id) => d.library.use_tool(app, &id).map(|v| {
@@ -2221,7 +2221,7 @@ mod tests {
 
     #[test]
     fn the_tool_library_keeps_tools_for_every_design_and_a_design_takes_a_copy() {
-        use crate::cam_tools::{Do, Picked};
+        use crate::cam_tools::{Do, Editing, Source};
         let dir = std::env::temp_dir().join(format!("solidcraft-ui-tool-library-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("tools.json").display().to_string();
@@ -2232,9 +2232,11 @@ mod tests {
         h.frames(2);
         assert!(h.app.machining.as_ref().unwrap().library.open, "the window opens");
         assert!(h.app.machining.as_ref().unwrap().library.tools().is_empty(), "a new library is empty");
-        // A 6 mm ball end mill in an ER11 holder.
+        // A 6 mm ball end mill in an ER11 holder, made in the editor.
         let mut d = h.app.machining.take().unwrap();
-        d.library.act(&mut h.app, Do::Pick(Picked::NewTool));
+        d.library.act(&mut h.app, &[], Do::Source(Source::Library));
+        d.library.act(&mut h.app, &[], Do::New);
+        assert_eq!(d.library.editing, Some(Editing::LibraryTool(None)));
         d.library.form.kind = 1;
         d.library.form.diameter = "6".into();
         d.library.form.flute_length = "18".into();
@@ -2242,22 +2244,34 @@ mod tests {
         d.library.form.holder_name = "ER11".into();
         d.library.form.sections = vec![["16".into(), "12".into()], ["22".into(), "25".into()]];
         d.library.form.stickout = "25".into();
-        d.library.act(&mut h.app, Do::Save);
+        d.library.act(&mut h.app, &[], Do::SaveEdit);
         assert!(d.library.error.is_none(), "{:?}", d.library.error);
+        assert!(d.library.editing.is_none());
         let tools = d.library.tools();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["tool"]["kind"], "ball_endmill");
         assert_eq!(tools[0]["tool"]["holder"]["sections"][1][0], 22.0);
         let id = tools[0]["id"].as_str().unwrap().to_string();
-        assert_eq!(d.library.picked, Some(Picked::Tool(id.clone())));
+        assert_eq!(d.library.selected, Some(id.clone()));
+        // Its row in the table; the filters hide it and bring it back.
+        assert_eq!(d.library.rows(&[]).len(), 1);
+        d.library.kinds = [true, false, false, false, false];
+        assert!(d.library.rows(&[]).is_empty(), "only flat end mills");
+        d.library.act(&mut h.app, &[], Do::ClearFilters);
+        d.library.min_diameter = "5".into();
+        d.library.max_diameter = "8".into();
+        assert_eq!(d.library.rows(&[]).len(), 1);
         // A holder of its own.
-        d.library.act(&mut h.app, Do::Pick(Picked::NewHolder));
+        d.library.act(&mut h.app, &[], Do::Source(Source::Holders));
+        d.library.act(&mut h.app, &[], Do::New);
         d.library.holder_name = "ER16".into();
         d.library.holder_sections = vec![["22".into(), "30".into()]];
-        d.library.act(&mut h.app, Do::Save);
+        d.library.act(&mut h.app, &[], Do::SaveEdit);
         assert_eq!(d.library.holders().len(), 1);
+        d.library.act(&mut h.app, &[], Do::Source(Source::Library));
         h.app.machining = Some(d);
         h.frames(2);
+        assert!(crate::scenario::handle_at(&format!("cam:lib:{id}")).is_some(), "the table shows its row");
         // The operation dialog offers it from the library; picking it copies it in.
         h.app.run("cam.setup", json!({})).unwrap();
         h.step(&json!({"start": "cam.contour"})).unwrap();
