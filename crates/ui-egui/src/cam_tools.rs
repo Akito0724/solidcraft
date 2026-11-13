@@ -463,9 +463,9 @@ pub fn form(ui: &mut egui::Ui, f: &mut ToolForm, holders: &[Value]) {
     }
     heading(ui, "Cutting data");
     crate::ui_kit::text(ui, tr("cam.lib.preset_hint"), crate::ui_kit::Text::Hint("tool"));
-    let mut material = ui.data(|d| d.get_temp::<usize>(egui::Id::new("sc_cam_tool_material"))).unwrap_or(0);
+    let mut material = ui.data(|d| d.get_temp::<usize>(egui::Id::unique("sc_cam_tool_material"))).unwrap_or(0);
     crate::ui_kit::segmented(ui, &mut material, &MATERIAL_LABELS, crate::ui_kit::Segments::default());
-    ui.data_mut(|d| d.insert_temp(egui::Id::new("sc_cam_tool_material"), material));
+    ui.data_mut(|d| d.insert_temp(egui::Id::unique("sc_cam_tool_material"), material));
     if let Some(row) = f.presets.get_mut(material) {
         for (cell, label) in row.iter_mut().zip(PRESET_LABELS) {
             field(ui, label, cell, tr_label("starting value"));
@@ -804,7 +804,7 @@ pub fn window(ctx: &egui::Context, lib: &mut Library) -> Option<Do> {
                         for e in shown {
                             let id = text(&e["id"]);
                             let selected = lib.picked == Some(Picked::Tool(id.clone()));
-                            if tool_row(ui, egui::Id::new(("sc_cam_lib_tool", &id)), &e["tool"], selected, false, "") {
+                            if tool_row(ui, egui::Id::unique(("sc_cam_lib_tool", &id)), &e["tool"], selected, false, "") {
                                 action = Some(Do::Pick(Picked::Tool(id)));
                             }
                             crate::scenario::publish_handle(&format!("cam:lib:{}", text(&e["id"])), ui.min_rect().right_bottom());

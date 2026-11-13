@@ -554,10 +554,9 @@ pub struct RunOp {
 }
 
 impl RunOp {
-    /// A toolpath's points (its arcs in pieces no longer than `step`, mm) with a flat cutter its
-    /// tool's size.
+    /// A toolpath's points (its arcs in pieces no longer than `step`, mm) with its tool as a
+    /// cutter.
     pub fn new(name: String, path: &Toolpath, step: f64) -> RunOp {
-        let r = path.tool.diameter / 2.0;
         let cutter = Cutter::of(&path.tool);
         RunOp { name, cutter, points: path.points(step) }
     }
